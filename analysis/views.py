@@ -1,0 +1,51 @@
+"""The two calls in the app's ``EcgAnalysisService``, on one URL.
+
+POST is ``request``: it enqueues, and answers with the analysis in its initial state.
+GET is ``get``: it answers with the current state, and 404 for a study the server does not
+know -- which is the app's ``null``.
+
+Neither runs the pipeline. A request that took a minute of CPU to answer would time out on
+a phone on mobile data, and the app is built to poll precisely so it does not have to.
+"""
+
+from __future__ import annotations
+
+from django.shortcuts import get_object_or_404
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.request import Request
+from rest_framework.response import Response
+
+from analysis.models import Analysis
+from studies.models import Study
+
+
+def _study_for(request: Request, study_id: str) -> Study:
+    """The caller's study, or 404.
+
+    Filtered by owner, so another user's study is not found rather than forbidden. A 403
+    would confirm the id exists, and study ids are the only handle anyone has on a
+    clinical image.
+    """
+    return get_object_or_404(Study, pk=study_id, owner=request.user)
+
+
+@api_view(["POST", "GET"])
+@permission_classes([IsAuthenticated])
+def study_analysis(request: Request, study_id: str) -> Response:
+    study = _study_for(request, study_id)
+
+    if request.method == "GET":
+        analysis = Analysis.objects.filter(study=study).first()
+        if analysis is None:
+            # Uploaded but never requested. The app's ``get`` is specified to return null
+            # for a study the server does not know about, and it does not know about an
+            # analysis nobody asked for.
+            return Response(status=404)
+        return Response(analysis.to_body())
+
+    # POST. Idempotent by design: the app's upload queue retries, and a second request
+    # must not start a second run or discard a finished one. ``get_or_create`` on the
+    # study's one-to-one is what makes that true even under two simultaneous requests.
+    analysis, created = Analysis.objects.get_or_create(study=study)
+    return Response(analysis.to_body(), status=201 if created else 200)

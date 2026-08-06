@@ -1,0 +1,23 @@
+# Tooling configuration only. This is not a distributable package: api-EKG is a Django
+# project that is run, not installed, and its dependencies are in requirements.txt.
+#
+# The conventions match ecg-pipeline's so that moving between the two repositories does
+# not mean reformatting every file you touch. None of these tools is installed in the
+# shared virtualenv -- see README, "Environment", on why that environment is kept minimal.
+
+[tool.black]
+line-length = 120
+
+[tool.isort]
+profile = "black"
+line_length = 120
+
+[tool.mypy]
+strict = true
+# Django's dynamic attributes (managers, related names, `objects`) are invisible to mypy
+# without django-stubs, which is another dependency for that virtualenv to carry.
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["ecg_pipeline.*", "rest_framework.*", "corsheaders.*"]
+ignore_missing_imports = true

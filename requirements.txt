@@ -1,0 +1,24 @@
+# Runtime dependencies for api-EKG.
+#
+# THIS FILE IS NOT THE WHOLE STORY. The worker imports ``ecg_pipeline`` in-process, which
+# pulls in torch and numpy under a pinned ABI (numpy<2 with torch<2.4; relax one and you
+# must relax the other). So these packages must be installed into the SAME interpreter
+# that already has ecg-pipeline -- see README, "Environment".
+#
+# Everything below is pure Python and has no binary dependency, which is why adding it to
+# that interpreter cannot disturb the pinned stack.
+
+django>=5.0,<5.2
+djangorestframework>=3.15
+
+# Admin theme. INSTALL IT WITH THE DJANGO BOUND ALREADY SATISFIED, or with this file
+# rather than on its own: it declares a bare `django` dependency, so a lone
+# `pip install django-unfold` re-resolves Django to the newest release. It did exactly
+# that here, jumping 5.1 to 6.1 without a word.
+django-unfold>=0.100,<0.110
+
+# The app runs on Expo. On a device React Native does not enforce CORS, but `expo start
+# --web` runs in a browser and does, so without this the web target fails against a
+# backend on another origin while the device target works -- a confusing way to lose an
+# afternoon.
+django-cors-headers>=4.3

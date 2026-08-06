@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+.env
+db.sqlite3
+
+# Uploaded ECG images and everything the pipeline writes from them. These are clinical
+# images of real recordings: they must never reach a remote.
+media/
+work/
+
+.DS_Store
+.idea/
+.vscode/
