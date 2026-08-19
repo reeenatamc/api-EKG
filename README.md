@@ -10,7 +10,7 @@ The HTTP service between the app and the models.
 It owns accounts, uploads, and the job queue. It owns **no clinical logic**: what an ECG
 means is decided in `ecg-pipeline`, and how a result is worded is decided in the app. Two
 things happen here that belong nowhere else, and both are about the photograph rather than
-the diagnosis — perspective rectification and calibration correction. See
+the diagnosis, perspective rectification and calibration correction. See
 [What this service actually computes](#what-this-service-actually-computes).
 
 ---
@@ -75,7 +75,7 @@ resident; doing it inside a request blocks a worker thread for the whole of it a
 out the phone that asked. The app is built to poll precisely so it does not have to wait.
 
 `0.0.0.0` because a phone reaches the laptop by LAN address. Set `API_BASE_URL` in the
-app's `.env` to that address — `10.0.2.2` for the Android emulator.
+app's `.env` to that address, `10.0.2.2` for the Android emulator.
 
 In development, verification codes are printed to the terminal running the server: the
 email backend is Django's console backend. Wiring real SMTP is a deployment setting
@@ -90,8 +90,8 @@ $VENV manage.py run_worker --study <uuid>     # a specific study
 $VENV manage.py run_worker --reclaim-stale    # requeue studies a dead worker left claimed
 ```
 
-The queue is the `Analysis` table, not Celery, because the states the app polls — queued,
-processing, ready, failed — are already rows in it. A broker on top would be a second copy
+The queue is the `Analysis` table, not Celery, because the states the app polls, queued,
+processing, ready, failed, are already rows in it. A broker on top would be a second copy
 of the same state that can disagree with the first. `Analysis.claim_next` is a
 compare-and-swap, so several workers against one database are safe, including on SQLite
 where `SELECT ... FOR UPDATE SKIP LOCKED` is unavailable. If this ever needs to fan out
@@ -113,11 +113,11 @@ the adapter reads as a transcription.
 | `signIn` | `POST /auth/sign-in/` | `{token, session:{...}}` |
 | `requestPasswordReset` | `POST /auth/password-reset/` | `{email, expiresInSeconds}` |
 | `signOut` | `POST /auth/sign-out/` | `204` |
-| — | `GET /auth/session/` | `{session:{...}}` |
+| n/a | `GET /auth/session/` | `{session:{...}}` |
 
 `GET /auth/session/` has no counterpart in the contract: `restoreSession` reads the app's
 own secure storage. It is there so the adapter can discover that a stored session is dead
-— signed out on another device — instead of finding out on the next upload.
+ signed out on another device, instead of finding out on the next upload.
 
 The token travels beside `session` rather than inside it because `Session` has no field for
 one. The app models what its screens need, and no screen needs a credential; storing it is
@@ -125,7 +125,7 @@ the adapter's job. Send it back as `Authorization: Token <key>`.
 
 ### `UploadService`
 
-`POST /studies/` — multipart: `image`, `imageWidth`, `imageHeight`, `metadata` (JSON, the
+`POST /studies/`, multipart: `image`, `imageWidth`, `imageHeight`, `metadata` (JSON, the
 app's `StudyMetadata` verbatim). Returns the app's `UploadReceipt`: `{remoteId, receivedAt}`.
 
 ### `EcgAnalysisService`
@@ -133,7 +133,7 @@ app's `StudyMetadata` verbatim). Returns the app's `UploadReceipt`: `{remoteId, 
 | Method | Endpoint |
 |---|---|
 | `request` | `POST /studies/{id}/analysis/` |
-| `get` | `GET /studies/{id}/analysis/` — `404` is the contract's `null` |
+| `get` | `GET /studies/{id}/analysis/`, `404` is the contract's `null` |
 
 Both answer a complete `EcgAnalysis`. `POST` is idempotent: the app's queue retries, and a
 second request must not start a second run or discard a finished one.
@@ -146,14 +146,14 @@ the interface decides how it is told, so no "Error 401" can reach a screen and t
 lives in one place.
 
 The vocabularies are in `accounts/failures.py`, `studies/failures.py` and
-`analysis/models.py`. Each refuses to emit a string outside its set — a typo would
+`analysis/models.py`. Each refuses to emit a string outside its set, a typo would
 otherwise arrive as an unrecognised reason, render as generic copy, and hide the real
 cause behind a shrug. Tests assert each set is a subset of the app's union, so a reason
 added on one side without the other fails the suite rather than QA.
 
 Two reasons are never produced here. `network-unreachable` belongs to the app's own
 adapter: a request that arrived is evidence the network worked. `grid-not-detected` is
-`ecg-pipeline`'s doing — when the digitizer cannot find the grid it raises per-image and
+`ecg-pipeline`'s doing, when the digitizer cannot find the grid it raises per-image and
 writes nothing, which arrives indistinguishable from any other unreadable image.
 
 ---
@@ -167,21 +167,21 @@ Two things, both about the photograph.
 The app sends the four corners of the paper, not a corrected image, and says why in
 `camera/homography.ts`: correcting on the phone means resampling on a mid-range GPU, and
 resampling is exactly where a one-millimetre trace disappears. The server has the image at
-native resolution and better filters, so the warp happens here — bicubic, written out as
+native resolution and better filters, so the warp happens here, bicubic, written out as
 lossless PNG, because JPEG's chroma subsampling averages colour over 2×2 blocks and that is
 the size of the fine grid lines the digitizer measures.
 
 A quad that is already the whole frame is passed through untouched. Warping it anyway would
 resample every pixel to achieve nothing, and not resampling is the entire point.
 
-The quad is validated hard in `studies/serializers.py` — bounds, convexity, minimum area —
+The quad is validated hard in `studies/serializers.py`, bounds, convexity, minimum area 
 because a homography from a self-crossing or misplaced quad **does not fail**. It rectifies
 the wrong region into something that still looks like an ECG and digitizes into a plausible
 trace. No later stage notices, so this is the stage that has to.
 
 ### Calibration correction (`analysis/calibration.py`)
 
-The digitizer assumes 25 mm/s and 10 mm/mV — `mv_per_mm` is a default argument upstream and
+The digitizer assumes 25 mm/s and 10 mm/mV, `mv_per_mm` is a default argument upstream and
 nothing overrides it. The app correctly lets the user say otherwise, because half speed and
 half amplitude are real settings on real machines.
 
@@ -200,7 +200,7 @@ heart beating at double the rate. Uncorrected, the model calls a tachycardic pat
 
 The correction is applied to the signal before interpretation, not to the emitted result,
 so quality assessment, the model and the contract all see one consistent record. Amplitude
-is an exact scalar. Time is a resampling — applied **per continuous run**, never across a
+is an exact scalar. Time is a resampling, applied **per continuous run**, never across a
 NaN. That rule is from the app's `signal.ts`: on a 3×4 print each grid lead exists for 2.5
 of the 10 seconds, and a line drawn across the other 7.5 is a credible-looking claim about
 a heart nobody recorded. A resampler run over a whole lead draws exactly that line.
@@ -245,7 +245,7 @@ Real limits, not TODOs. Each needs a decision rather than a patch.
 
 **`measurements` is always `null`.** Rate, PR, QRS, QT, QTc, axis. The pipeline does not
 delineate waves, and the app's `EcgMeasurements` is all-or-nothing, so there is no honest
-partial answer — filling PR and QT with anything would be inventing measurements of a
+partial answer, filling PR and QT with anything would be inventing measurements of a
 patient. Closing this means wave delineation in `ecg-pipeline`, not a change here.
 
 **`AnalysisFailureReason` has no case for "digitized, but too poor to read".** A degraded
@@ -254,14 +254,14 @@ in the app's union; the server side is one constant.
 
 **There is no set-a-new-password endpoint.** `AuthService` has one `verifyCode` and no
 method for submitting a password, so a reset code is redeemed through the same call and the
-answer is a session — code-based sign-in rather than a reset. Adding a change-password
+answer is a session, code-based sign-in rather than a reset. Adding a change-password
 screen means adding an endpoint for it, not overloading `verify`.
 
 **Sign-in distinguishes `account-not-found` from `credentials-mismatch`,** which is the
 app's union as written and lets the screen offer to register instead. It also tells an
 anonymous caller whether an address is registered. `ACCOUNT_ENUMERATION_IS_ACCEPTABLE` in
 `accounts/views.py` turns it off in one line, with no change on the app's side. Password
-reset never leaks regardless — it answers identically either way and is the endpoint an
+reset never leaks regardless, it answers identically either way and is the endpoint an
 attacker would actually probe.
 
 **Interpretation runs whatever pathway `ECG_PATHWAY` names**, defaulting to `rhythm`. Read
@@ -282,5 +282,5 @@ cross-check. What they do not cover is a real image through the digitizer and EC
 that needs both sets of weights and tens of seconds per case, which makes it an integration
 test. `PipelineRunner._interpret` is patched where the merge logic is exercised.
 
-The suite runs with MD5 password hashing (`config/test_runner.py`) — PBKDF2 took it from
+The suite runs with MD5 password hashing (`config/test_runner.py`). PBKDF2 took it from
 two seconds to half a minute, and a suite that slow stops being run.
