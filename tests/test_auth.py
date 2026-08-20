@@ -40,9 +40,7 @@ class RegistrationTests(TestCase):
         self.client = APIClient()
 
     def register(self, email: str = "a@example.com", password: str = GOOD_PASSWORD, role: str = "professional"):
-        return self.client.post(
-            "/auth/register/", {"email": email, "password": password, "role": role}, format="json"
-        )
+        return self.client.post("/auth/register/", {"email": email, "password": password, "role": role}, format="json")
 
     def test_registration_returns_a_pending_verification(self) -> None:
         response = self.register()
@@ -139,9 +137,7 @@ class VerificationTests(TestCase):
         self.assertEqual(self.verify("000000").json()["reason"], failures.CODE_MISMATCH)
 
     def test_an_expired_code_is_expired_not_mismatched(self) -> None:
-        VerificationCode.objects.filter(user=self.user).update(
-            expires_at=timezone.now() - timedelta(seconds=1)
-        )
+        VerificationCode.objects.filter(user=self.user).update(expires_at=timezone.now() - timedelta(seconds=1))
 
         self.assertEqual(self.verify(code_from_outbox()).json()["reason"], failures.CODE_EXPIRED)
 
@@ -185,9 +181,7 @@ class VerificationTests(TestCase):
         self.assertEqual(self.verify("abc").json()["reason"], failures.CODE_MISMATCH)
 
     def test_verifying_an_unknown_address_says_so(self) -> None:
-        response = self.client.post(
-            "/auth/verify/", {"email": "nobody@example.com", "code": "123456"}, format="json"
-        )
+        response = self.client.post("/auth/verify/", {"email": "nobody@example.com", "code": "123456"}, format="json")
 
         self.assertEqual(response.json()["reason"], failures.ACCOUNT_NOT_FOUND)
 

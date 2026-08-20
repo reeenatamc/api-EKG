@@ -28,12 +28,7 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from accounts import failures
-from accounts.models import (
-    PURPOSE_PASSWORD_RESET,
-    PURPOSE_REGISTRATION,
-    VERIFICATION_WINDOW_SECONDS,
-    VerificationCode,
-)
+from accounts.models import PURPOSE_PASSWORD_RESET, PURPOSE_REGISTRATION, VERIFICATION_WINDOW_SECONDS, VerificationCode
 from accounts.serializers import (
     MINIMUM_PASSWORD_LENGTH,
     EmailSerializer,

@@ -93,9 +93,7 @@ def _is_simple_quad(points: list[tuple[float, float]]) -> bool:
 
 
 class CalibrationSerializer(serializers.Serializer):
-    speedMmPerSecond = serializers.FloatField(
-        min_value=MIN_SPEED_MM_PER_SECOND, max_value=MAX_SPEED_MM_PER_SECOND
-    )
+    speedMmPerSecond = serializers.FloatField(min_value=MIN_SPEED_MM_PER_SECOND, max_value=MAX_SPEED_MM_PER_SECOND)
     gainMmPerMillivolt = serializers.FloatField(
         min_value=MIN_GAIN_MM_PER_MILLIVOLT, max_value=MAX_GAIN_MM_PER_MILLIVOLT
     )

@@ -17,13 +17,7 @@ from __future__ import annotations
 import numpy as np
 from django.test import SimpleTestCase
 
-from analysis.calibration import (
-    amplitude_factor,
-    correct_canonical,
-    is_standard,
-    time_factor,
-    write_canonical_csv,
-)
+from analysis.calibration import amplitude_factor, correct_canonical, is_standard, time_factor, write_canonical_csv
 
 
 class FactorTests(SimpleTestCase):
@@ -184,9 +178,9 @@ class CsvRoundTripTests(SimpleTestCase):
     """The corrected file has to be readable as if the digitizer had written it."""
 
     def test_a_corrected_csv_loads_back_with_its_leads_and_gaps(self) -> None:
-        from ecg_pipeline.interpret.waveform import load_canonical_csv
-
         import tempfile
+
+        from ecg_pipeline.interpret.waveform import load_canonical_csv
 
         canonical = np.array([[1.0, 2.0, np.nan], [4.0, np.nan, 6.0]])
         names = ["I", "II"]
