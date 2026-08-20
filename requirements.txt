@@ -8,13 +8,14 @@
 # Everything below is pure Python and has no binary dependency, which is why adding it to
 # that interpreter cannot disturb the pinned stack.
 
-django>=5.0,<5.2
-djangorestframework>=3.15
+# 5.2 is the LTS, supported to April 2028. The previous bound was <5.2, which sat one
+# release below it and could not be satisfied at all alongside the admin theme below.
+django>=5.2,<6.0
+djangorestframework>=3.16
 
-# Admin theme. INSTALL IT WITH THE DJANGO BOUND ALREADY SATISFIED, or with this file
-# rather than on its own: it declares a bare `django` dependency, so a lone
-# `pip install django-unfold` re-resolves Django to the newest release. It did exactly
-# that here, jumping 5.1 to 6.1 without a word.
+# Admin theme. Pin the upper bound: this package tracks Django closely and every release
+# from 0.97 on requires django>=5.2, so an unbounded install re-resolves Django rather
+# than failing. It did exactly that here once, jumping 5.1 to 6.1 without a word.
 django-unfold>=0.100,<0.110
 
 # The app runs on Expo. On a device React Native does not enforce CORS, but `expo start
