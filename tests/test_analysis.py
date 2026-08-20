@@ -114,8 +114,15 @@ class AnalysisEndpointTests(TestCase):
                 "status": STATUS_READY,
                 "signal": {"samplingRateHz": 500, "durationSeconds": 10.0, "leads": []},
                 "measurements": None,
-                "observations": [{"id": "sinus-rhythm", "label": "SINUS RHYTHM", "leads": ["II"],
-                                  "confidence": 0.9, "needsReview": True}],
+                "observations": [
+                    {
+                        "id": "sinus-rhythm",
+                        "label": "SINUS RHYTHM",
+                        "leads": ["II"],
+                        "confidence": 0.9,
+                        "needsReview": True,
+                    }
+                ],
                 "failure": None,
                 "completedAt": "2026-08-06T10:00:00+00:00",
             }
@@ -225,8 +232,15 @@ class QueueTests(TestCase):
         analysis = self.make_analysis()
 
         analysis.mark_finished(
-            {"studyId": "x", "status": STATUS_FAILED, "signal": None, "measurements": None,
-             "observations": [], "failure": "unreadable-image", "completedAt": None}
+            {
+                "studyId": "x",
+                "status": STATUS_FAILED,
+                "signal": None,
+                "measurements": None,
+                "observations": [],
+                "failure": "unreadable-image",
+                "completedAt": None,
+            }
         )
 
         self.assertEqual(analysis.status, STATUS_FAILED)
@@ -257,8 +271,15 @@ class MountCrossCheckTests(TestCase):
     def check(self, declared: str, identified: str | None) -> dict:
         study = SimpleNamespace(id="study-1", mount=declared)
         record = {"digitization": {"lead_layout": identified}}
-        body = {"studyId": "study-1", "status": STATUS_READY, "signal": {}, "measurements": None,
-                "observations": [{"id": "x"}], "failure": None, "completedAt": "2026-08-06T10:00:00+00:00"}
+        body = {
+            "studyId": "study-1",
+            "status": STATUS_READY,
+            "signal": {},
+            "measurements": None,
+            "observations": [{"id": "x"}],
+            "failure": None,
+            "completedAt": "2026-08-06T10:00:00+00:00",
+        }
         return self.runner._apply_mount_cross_check(study, record, body, {})
 
     def test_an_agreeing_layout_passes_through(self) -> None:

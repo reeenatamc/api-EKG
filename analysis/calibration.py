@@ -152,9 +152,7 @@ def correct_canonical(
                 # would put a datum where the resampling said there is none.
                 continue
             new_length = min(new_length, new_samples - new_start)
-            output[lead, new_start : new_start + new_length] = _resample_run(
-                corrected[lead, start:end], new_length
-            )
+            output[lead, new_start : new_start + new_length] = _resample_run(corrected[lead, start:end], new_length)
 
     return output
 

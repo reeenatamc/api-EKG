@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  DJANGO_SETTINGS_MODULE: config.settings
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install linters
+        run: pip install black==24.1.1 isort==5.13.2
+
+      - name: Byte-compile every module
+        # Needs none of the runtime dependencies, so it runs here rather than in
+        # the job that spends four minutes installing torch.
+        run: |
+          find accounts analysis config studies tests -name '*.py' \
+            ! -path '*/migrations/*' \
+            -print0 | xargs -0 python -m py_compile
+
+      - name: black
+        run: black --check --diff .
+
+      - name: isort
+        run: isort --check-only --diff .
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    env:
+      SECRET_KEY: ci-only-not-a-real-secret-000000000000000000000000000000000000
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install CPU-only torch
+        # ecg-pipeline pins numpy<2 against torch<2.4, so the bound is repeated
+        # here to stop the resolver picking a CUDA build off the default index.
+        run: pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.2,<2.4"
+
+      - name: Install ecg-pipeline
+        # The worker imports it in-process and the calibration tests read a
+        # canonical CSV back through it, so the suite genuinely needs it present.
+        # This couples the build to that repository's main branch, which is the
+        # same coupling the application has at runtime.
+        run: pip install "git+https://github.com/reeenatamc/ecg-pipeline.git@main"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Django checks
+        run: python manage.py check
+
+      - name: Check for missing migrations
+        run: python manage.py makemigrations --check --dry-run --no-input
+
+      - name: Run tests
+        # settings.TEST_RUNNER swaps in an MD5 password hasher for the throwaway
+        # test database, which is what keeps the auth tests off PBKDF2.
+        run: python manage.py test --verbosity 2

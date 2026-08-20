@@ -15,12 +15,7 @@ from pathlib import Path
 from django.test import SimpleTestCase
 from PIL import Image
 
-from analysis.rectify import (
-    is_full_frame,
-    perspective_coefficients,
-    rectified_size,
-    rectify,
-)
+from analysis.rectify import is_full_frame, perspective_coefficients, rectified_size, rectify
 
 
 def apply(coefficients: tuple[float, ...], x: float, y: float) -> tuple[float, float]:

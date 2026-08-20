@@ -7,10 +7,14 @@
 
 [tool.black]
 line-length = 120
+# Migrations are generated, not written. Restyling them only makes the next
+# generated one look like a change.
+force-exclude = "/migrations/"
 
 [tool.isort]
 profile = "black"
 line_length = 120
+skip_glob = ["*/migrations/*"]
 
 [tool.mypy]
 strict = true

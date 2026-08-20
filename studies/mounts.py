@@ -59,9 +59,7 @@ LEAD_LAYOUT_FILE = {
 # exact match and refused a perfectly readable 3x4-with-rhythm-strip that the user had
 # framed as a plain 3x4 -- an ordinary thing to do, since the app's mount menu is a framing
 # guide and does not ask whether a strip is present.
-_THREE_BY_FOUR = frozenset(
-    {"standard_3x4", "standard_3x4_with_r1", "standard_3x4_with_r2", "standard_3x4_with_r3"}
-)
+_THREE_BY_FOUR = frozenset({"standard_3x4", "standard_3x4_with_r1", "standard_3x4_with_r2", "standard_3x4_with_r3"})
 
 EXPECTED_LAYOUTS = {
     STANDARD_3X4: _THREE_BY_FOUR,
