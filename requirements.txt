@@ -23,3 +23,23 @@ django-unfold>=0.100,<0.110
 # backend on another origin while the device target works -- a confusing way to lose an
 # afternoon.
 django-cors-headers>=4.3
+
+# The three below are used by this service's own code, not only by the pipeline, and were
+# missing: in the environment the README describes they arrive through the digitizer's
+# virtualenv, so a clean install is the only place their absence shows. It shows loudly.
+# Without Pillow the service does not start at all; without the other two, three test
+# modules fail to import and `manage.py test` reports 56 tests instead of 117 -- the same
+# silent-skip that ecg-pipeline's README warns about, happening here.
+
+# studies.Study.image is an ImageField, and Django refuses to run the system check
+# without Pillow: "Cannot use ImageField because Pillow is not installed".
+Pillow>=10
+
+# analysis/rectify.py builds the homography with it, and analysis/calibration.py the
+# amplitude scaling. Kept below 2.0 because the worker shares its interpreter with torch
+# 2.2.x, which is built against the numpy 1.x C ABI and fails to import under numpy 2 --
+# the same pinned pair the README describes.
+numpy>=1.26,<2
+
+# analysis/calibration.py resamples with it, per continuous run and never across a NaN.
+scipy>=1.11
