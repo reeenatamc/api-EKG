@@ -113,6 +113,43 @@ class Analysis(models.Model):
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
         }
 
+    def requeue(self) -> None:
+        """Put a failed analysis back in the queue, at the user's request.
+
+        The app offers a retry on a failed study and had nothing to reach: POST is
+        idempotent, so pressing it returned the same failed record and the button looked
+        broken. This is the one transition that idempotency was never protecting. A
+        queued or processing row must not be touched, because that would be the second
+        run the comment on the view warns about, and a ready one must not be discarded.
+        A failed row is neither.
+
+        The failure and the timestamps go with it. Leaving the old ones would describe a
+        run that is no longer the current one, and ``to_body`` would serve a queued
+        analysis carrying the reason it failed last time.
+
+        Attempts go back to zero. What the user is asking for is another try, and the
+        counter exists to stop a study that kills the worker from being reclaimed
+        forever, not to ration deliberate requests.
+        """
+        self.status = STATUS_QUEUED
+        self.failure = None
+        self.payload = None
+        self.attempts = 0
+        self.started_at = None
+        self.completed_at = None
+        self.requested_at = timezone.now()
+        self.save(
+            update_fields=[
+                "status",
+                "failure",
+                "payload",
+                "attempts",
+                "started_at",
+                "completed_at",
+                "requested_at",
+            ]
+        )
+
     def mark_processing(self) -> None:
         self.status = STATUS_PROCESSING
         self.started_at = timezone.now()

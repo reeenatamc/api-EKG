@@ -106,6 +106,29 @@ class AnalysisEndpointTests(TestCase):
         self.assertEqual(second.status_code, 200)
         self.assertEqual(Analysis.objects.count(), 1)
 
+    def test_requesting_again_after_a_failure_puts_it_back_in_the_queue(self) -> None:
+        # The other half of the idempotency rule, and the one that was missing. The app
+        # offers a retry on a failed study; without this the second request returned the
+        # same failed record and the button did nothing anyone could see.
+        self.client.post(self.url())
+        Analysis.objects.get().mark_failed(FAILURE_UNSUPPORTED_MOUNT)
+
+        body = self.client.post(self.url()).json()
+
+        self.assertEqual(body["status"], STATUS_QUEUED)
+        self.assertIsNone(body["failure"])
+        self.assertEqual(Analysis.objects.count(), 1)
+
+    def test_a_queued_analysis_is_not_disturbed_by_a_repeated_request(self) -> None:
+        # Requeueing one that is already waiting would reset the attempt counter that
+        # stops a study capable of killing the worker from being retried forever.
+        self.client.post(self.url())
+        Analysis.objects.filter(pk=Analysis.objects.get().pk).update(attempts=2)
+
+        self.client.post(self.url())
+
+        self.assertEqual(Analysis.objects.get().attempts, 2)
+
     def test_a_finished_analysis_survives_a_repeated_request(self) -> None:
         self.client.post(self.url())
         analysis = Analysis.objects.get()
@@ -217,6 +240,31 @@ class QueueTests(TestCase):
         analysis.refresh_from_db()
         self.assertEqual(reclaimed, 1)
         self.assertEqual(analysis.status, STATUS_QUEUED)
+
+    def test_requeue_returns_a_failed_analysis_to_the_queue(self) -> None:
+        # The app offers a retry on a failed study, and POST is idempotent: without this
+        # transition the button returned the same failed record and did nothing visible.
+        analysis = self.make_analysis()
+        analysis.mark_failed(FAILURE_UNSUPPORTED_MOUNT)
+
+        analysis.requeue()
+        analysis.refresh_from_db()
+
+        self.assertEqual(analysis.status, STATUS_QUEUED)
+        self.assertIsNone(analysis.failure)
+        self.assertEqual(analysis.attempts, 0)
+
+    def test_requeue_drops_the_previous_run(self) -> None:
+        # Keeping the old timestamps would describe a run that is no longer the current
+        # one, and to_body would serve a queued analysis carrying last time's reason.
+        analysis = self.make_analysis()
+        analysis.mark_failed(FAILURE_UNSUPPORTED_MOUNT)
+
+        analysis.requeue()
+
+        self.assertIsNone(analysis.started_at)
+        self.assertIsNone(analysis.completed_at)
+        self.assertIsNone(analysis.payload)
 
     def test_a_repeatedly_failing_study_is_not_reclaimed_forever(self) -> None:
         analysis = self.make_analysis()
