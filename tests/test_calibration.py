@@ -178,6 +178,7 @@ class CsvRoundTripTests(SimpleTestCase):
     """The corrected file has to be readable as if the digitizer had written it."""
 
     def test_a_corrected_csv_loads_back_with_its_leads_and_gaps(self) -> None:
+        import os
         import tempfile
 
         from ecg_pipeline.interpret.waveform import load_canonical_csv
@@ -185,9 +186,14 @@ class CsvRoundTripTests(SimpleTestCase):
         canonical = np.array([[1.0, 2.0, np.nan], [4.0, np.nan, 6.0]])
         names = ["I", "II"]
 
-        with tempfile.NamedTemporaryFile(suffix=".csv") as handle:
-            write_canonical_csv(handle.name, canonical, names)
-            loaded, loaded_names = load_canonical_csv(handle.name)
+        # A directory and not NamedTemporaryFile: on Windows a named temporary file
+        # stays locked by its own handle, so opening it again by name -- which is what
+        # both functions under test do -- fails with PermissionError. On POSIX the same
+        # code works, which is why this only shows up here.
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "canonical.csv")
+            write_canonical_csv(path, canonical, names)
+            loaded, loaded_names = load_canonical_csv(path)
 
         self.assertEqual(loaded_names, names)
         np.testing.assert_allclose(loaded, canonical)

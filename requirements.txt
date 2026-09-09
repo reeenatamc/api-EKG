@@ -42,4 +42,13 @@ Pillow>=10
 numpy>=1.26,<2
 
 # analysis/calibration.py resamples with it, per continuous run and never across a NaN.
-scipy>=1.11
+#
+# The upper bound is not caution either. scipy 1.16 and later require numpy>=2, so an
+# unbounded install resolves to a scipy that contradicts the numpy pin three lines up,
+# in this same file. pip installs it anyway and says so in one line among many:
+#
+#   scipy 1.18.1 requires numpy<2.8,>=2.0.0, but you have numpy 1.26.4
+#
+# What is left is an environment that imports fine until something reaches the part of
+# scipy that needs the newer numpy.
+scipy>=1.12,<1.16
