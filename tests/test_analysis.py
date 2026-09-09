@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import tempfile
+from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -198,6 +199,18 @@ class QueueTests(TestCase):
         # A worker killed mid-study leaves a row claimed that nothing would ever pick up.
         analysis = self.make_analysis()
         Analysis.claim_next()
+
+        # Age the claim on purpose. reclaim_stale filters on started_at < cutoff, so
+        # passing timezone.now() right after the claim leaves the two one clock tick
+        # apart at best, and on a platform whose clock is coarser than the claim itself
+        # they are the same instant: nothing is older than the cutoff and the test fails
+        # without anything being wrong. The filter is right as it stands -- widening it
+        # to <= would let a worker reclaim the row it just took. What was missing is a
+        # row that is actually stale, which is what the worker means by it: its own
+        # cutoff is half an hour back.
+        Analysis.objects.filter(pk=analysis.pk).update(
+            started_at=timezone.now() - timedelta(hours=1)
+        )
 
         reclaimed = Analysis.reclaim_stale(timezone.now())
 
