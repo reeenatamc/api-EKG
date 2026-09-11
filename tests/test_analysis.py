@@ -154,6 +154,11 @@ class AnalysisEndpointTests(TestCase):
                         "leads": ["II"],
                         "confidence": 0.9,
                         "needsReview": True,
+                        # ecg-pipeline's classification of the observation. Nothing here
+                        # reads this key -- the payload is served verbatim -- but it is
+                        # part of what the pipeline now emits, so it belongs in a
+                        # representative fixture.
+                        "category": "ritmo",
                     }
                 ],
                 "failure": None,
@@ -165,6 +170,10 @@ class AnalysisEndpointTests(TestCase):
 
         self.assertEqual(body["status"], STATUS_READY)
         self.assertEqual(len(body["observations"]), 1)
+        # Observations are stored and served as ecg-pipeline emits them, opaque JSON --
+        # so a field neither side inspects, like "category", still has to survive the
+        # round trip untouched.
+        self.assertEqual(body["observations"][0]["category"], "ritmo")
 
     def test_the_status_is_polled_through_get(self) -> None:
         self.client.post(self.url())
