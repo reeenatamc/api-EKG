@@ -153,8 +153,8 @@ UNFOLD = {
 
 TEST_RUNNER = "config.test_runner.FastPasswordHasherRunner"
 
-LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"
+LANGUAGE_CODE = "es"
+TIME_ZONE = "America/Guayaquil"
 USE_I18N = True
 USE_TZ = True
 

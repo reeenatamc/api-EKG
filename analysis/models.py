@@ -93,7 +93,8 @@ class Analysis(models.Model):
     class Meta:
         ordering = ["-requested_at"]
         indexes = [models.Index(fields=["status", "requested_at"])]
-        verbose_name_plural = "analyses"
+        verbose_name = "análisis"
+        verbose_name_plural = "análisis"
 
     def __str__(self) -> str:
         return f"{self.study_id} [{self.status}]"

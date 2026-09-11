@@ -90,6 +90,8 @@ class User(AbstractBaseUser, PermissionsMixin):
     REQUIRED_FIELDS: list[str] = []
 
     class Meta:
+        verbose_name = "usuario"
+        verbose_name_plural = "usuarios"
         ordering = ["-date_joined"]
 
     def __str__(self) -> str:
@@ -114,6 +116,8 @@ class VerificationCode(models.Model):
     attempts = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
+        verbose_name = "código de verificación"
+        verbose_name_plural = "códigos de verificación"
         ordering = ["-created_at"]
         indexes = [models.Index(fields=["user", "purpose", "-created_at"])]
 
