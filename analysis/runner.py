@@ -164,6 +164,11 @@ class PipelineRunner:
             digitization=record.get("digitization"),
             signal_quality=record.get("signal_quality"),
             calibration_corrected=not study.has_standard_calibration,
+            # Where the threshold that produced ``record["flagged"]`` came from -- explicit,
+            # ecg-pipeline's own default, or "none" -- straight from ``interpret_csv`` via
+            # ``_merge_interpretation``'s spread. None here (rather than the key being absent)
+            # means interpretation was never reached, e.g. no CSV to interpret at all.
+            threshold_source=record.get("threshold_source"),
         )
 
         body = self._apply_mount_cross_check(study, record, body, diagnostics)
