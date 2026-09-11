@@ -5,6 +5,12 @@ The quad checks are the substantial ones. Everything downstream trusts those fou
 self-crossing quadrilateral does not fail -- it produces a mirrored, folded, or wildly
 stretched image that still looks like an ECG and still digitizes into a plausible-looking
 trace. There is no later stage that catches it. So it is caught here.
+
+Two more checks exist for the same reason a bouncer checks a bag before checking the
+invitation: ``serializers.ImageField`` alone accepts a file of any size and any pixel
+count, and ``STUDY_MAX_UPLOAD_SIZE_BYTES``/``STUDY_MAX_UPLOAD_PIXELS`` (config/settings.py)
+refuse a payload that is too large, or too densely packed with pixels, before anything
+about the quad or the calibration is even looked at.
 """
 
 from __future__ import annotations
@@ -13,6 +19,7 @@ import json
 import math
 from typing import Any
 
+from django.conf import settings
 from rest_framework import serializers
 
 from studies.models import Study
@@ -147,15 +154,41 @@ class StudyUploadSerializer(serializers.Serializer):
         declared_width = attrs["imageWidth"]
         declared_height = attrs["imageHeight"]
 
+        # Checked before anything about the quad: a payload this large or this densely
+        # packed with pixels is refused regardless of whether the rest of it is otherwise
+        # fine. See the settings' own comments for why FILE_UPLOAD_MAX_MEMORY_SIZE does not
+        # already cover this.
+        if image.size > settings.STUDY_MAX_UPLOAD_SIZE_BYTES:
+            raise serializers.ValidationError(
+                f"image is {image.size} bytes, over the {settings.STUDY_MAX_UPLOAD_SIZE_BYTES} byte limit"
+            )
+
         # The quad is in the pixels of *this* image. If the declared dimensions are not
         # the file's own, the corners point somewhere else entirely, and the rectified
         # crop would be of the wrong region while looking perfectly ordinary.
         actual = _image_size(image)
-        if actual is not None and actual != (declared_width, declared_height):
-            raise serializers.ValidationError(
-                f"imageWidth/imageHeight ({declared_width}x{declared_height}) do not match "
-                f"the uploaded image ({actual[0]}x{actual[1]})"
-            )
+        if actual is not None:
+            # A "decompression bomb": a file that is small in bytes -- a few KB of a
+            # solid-colour PNG compresses trivially well -- but declares dimensions that
+            # decode to gigabytes of pixel data. Pillow has its own guard for this
+            # (Image.MAX_IMAGE_PIXELS, a DecompressionBombError above roughly twice its
+            # ~89 megapixel default), but that is a backstop for arbitrary Pillow callers:
+            # it would surface here as an unhandled exception rather than
+            # 'payload-rejected', and it says nothing at all between its warning
+            # threshold and that error threshold. This check runs first, at a lower
+            # bound, so it is the one that actually speaks.
+            pixel_count = actual[0] * actual[1]
+            if pixel_count > settings.STUDY_MAX_UPLOAD_PIXELS:
+                raise serializers.ValidationError(
+                    f"image is {actual[0]}x{actual[1]} ({pixel_count} pixels), over the "
+                    f"{settings.STUDY_MAX_UPLOAD_PIXELS} pixel limit"
+                )
+
+            if actual != (declared_width, declared_height):
+                raise serializers.ValidationError(
+                    f"imageWidth/imageHeight ({declared_width}x{declared_height}) do not match "
+                    f"the uploaded image ({actual[0]}x{actual[1]})"
+                )
 
         points = [(_finite(p["x"]), _finite(p["y"])) for p in attrs["metadata"]["quad"]]
 

@@ -176,10 +176,39 @@ WORK_ROOT = Path(os.environ.get("ECG_WORK_ROOT", BASE_DIR / "work"))
 FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024
 DATA_UPLOAD_MAX_MEMORY_SIZE = 40 * 1024 * 1024
 
+# The limits studies/serializers.py actually enforces. The setting above only decides
+# memory vs a temp file, it is not a cap: on its own, serializers.ImageField accepts a
+# 300 MB PNG or a small file that decompresses to gigabytes ("decompression bomb"). Phone
+# photos are 4-15 MB, so 25 MB leaves headroom without accepting an unbounded upload.
+STUDY_MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("STUDY_MAX_UPLOAD_SIZE_BYTES", str(25 * 1024 * 1024)))
+
+# Pillow refuses to open an image above roughly twice Image.MAX_IMAGE_PIXELS (about 178
+# megapixels) with its own DecompressionBombError, but that guard is a blunt backstop
+# meant for arbitrary Pillow callers, not this API's contract -- it would surface as an
+# unhandled exception rather than 'payload-rejected', and it says nothing between its
+# warning threshold (~89 MP) and that error threshold. This is the limit that is actually
+# checked, and checked first, so it is the one that speaks.
+STUDY_MAX_UPLOAD_PIXELS = int(os.environ.get("STUDY_MAX_UPLOAD_PIXELS", str(50_000_000)))
+
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.TokenAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
     "UNAUTHENTICATED_USER": None,
+    # Throttled renders as {"detail": "..."} by default, which is exactly the free text
+    # the causes-not-messages contract forbids. See accounts/exceptions.py.
+    "EXCEPTION_HANDLER": "accounts.exceptions.custom_exception_handler",
+    # Only accounts/throttling.py's two scopes are used, applied per-view with
+    # @throttle_classes on the four unauthenticated auth endpoints -- nothing else here
+    # takes unauthenticated traffic worth limiting. Rates are overridable per deployment;
+    # 'auth' (sign_in, verify_code) tolerates more traffic than 'auth-email' (register,
+    # request_password_reset), which each send an email. DRF keeps throttle history in
+    # the default cache: LocMemCache is fine for one process, but a multi-process
+    # deployment needs CACHES pointed at something shared (Redis, Memcached) or each
+    # process only ever sees its own share of the traffic.
+    "DEFAULT_THROTTLE_RATES": {
+        "auth": os.environ.get("AUTH_THROTTLE_RATE", "10/min"),
+        "auth-email": os.environ.get("AUTH_EMAIL_THROTTLE_RATE", "5/min"),
+    },
 }
 
 # Verification codes go to the console in development. Wiring real SMTP is a deployment

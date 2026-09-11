@@ -14,6 +14,15 @@ then answer 'credentials-mismatch' like everything else, and the app falls back 
 generic copy without any change on its side. Password reset never leaks regardless -- it
 answers the same way for an address that exists and one that does not, which is why its
 success carries no information.
+
+On rate limiting
+----------------
+None of these four views requires a credential to be called, so all four are throttled
+(``accounts/throttling.py``): a wrong-code guess already dies on its own after
+``MAX_VERIFICATION_ATTEMPTS``, but nothing else here stopped a client from hammering
+``sign_in`` with passwords or making ``register``/``request_password_reset`` send
+unlimited email. A throttled request is turned into a cause, not DRF's default free-text
+429, in ``accounts/exceptions.py``.
 """
 
 from __future__ import annotations
@@ -22,7 +31,7 @@ from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
 from rest_framework.authtoken.models import Token
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -36,6 +45,7 @@ from accounts.serializers import (
     SignInSerializer,
     VerifyCodeSerializer,
 )
+from accounts.throttling import AuthEmailRateThrottle, AuthRateThrottle
 
 User = get_user_model()
 
@@ -84,6 +94,7 @@ def _token_for(user: User) -> str:
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@throttle_classes([AuthEmailRateThrottle])
 def register(request: Request) -> Response:
     """Create the account and leave verification pending.
 
@@ -128,6 +139,7 @@ def register(request: Request) -> Response:
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@throttle_classes([AuthRateThrottle])
 def verify_code(request: Request) -> Response:
     """Redeem a code and open the session.
 
@@ -169,6 +181,7 @@ def verify_code(request: Request) -> Response:
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@throttle_classes([AuthRateThrottle])
 def sign_in(request: Request) -> Response:
     form = SignInSerializer(data=request.data)
     if not form.is_valid():
@@ -196,6 +209,7 @@ def sign_in(request: Request) -> Response:
 
 @api_view(["POST"])
 @permission_classes([AllowAny])
+@throttle_classes([AuthEmailRateThrottle])
 def request_password_reset(request: Request) -> Response:
     """Send a reset code, and answer the same way whether or not the account exists.
 

@@ -205,6 +205,38 @@ class UploadTests(TestCase):
 
         self.assertEqual(Study.objects.count(), 0)
 
+    # -- upload limits ------------------------------------------------------------------
+
+    def test_an_image_over_the_size_limit_is_rejected(self) -> None:
+        # The limit is pinned below this ordinary image's own byte length rather than to a
+        # fixed number, so the test does not depend on exactly how well PNG compresses a
+        # solid-colour fixture.
+        image = png_bytes()
+        with override_settings(STUDY_MAX_UPLOAD_SIZE_BYTES=len(image) - 1):
+            response = self.upload(image=image)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["reason"], failures.PAYLOAD_REJECTED)
+        self.assertEqual(Study.objects.count(), 0)
+
+    def test_an_image_over_the_pixel_limit_is_rejected(self) -> None:
+        # A small, cheaply-generated image stands in for a decompression bomb: what is
+        # being checked is the width*height count, not the byte size, so the fixture never
+        # needs to actually be huge.
+        with override_settings(STUDY_MAX_UPLOAD_PIXELS=(IMAGE_WIDTH * IMAGE_HEIGHT) - 1):
+            response = self.upload()
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["reason"], failures.PAYLOAD_REJECTED)
+        self.assertEqual(Study.objects.count(), 0)
+
+    def test_an_ordinary_image_still_works_under_both_limits(self) -> None:
+        # The default limits (25 MB, 50 megapixels) must not reject the phone photos this
+        # service exists to read; nothing here overrides them.
+        response = self.upload()
+
+        self.assertEqual(response.status_code, 201)
+
 
 class UploadFailureVocabularyTests(TestCase):
     def test_every_reason_is_one_the_app_knows(self) -> None:

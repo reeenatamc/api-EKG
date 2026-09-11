@@ -9,9 +9,11 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import mail
-from django.test import TestCase
+from django.core.cache import cache
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIClient
 
@@ -27,6 +29,14 @@ from accounts.models import (
 User = get_user_model()
 
 GOOD_PASSWORD = "correct horse battery"
+
+
+def with_throttle_rate(rate: str) -> dict:
+    """A REST_FRAMEWORK override that carries every other key as-is and replaces only the
+    two auth scopes, so a test does not have to fire off a real minute of traffic to reach
+    the limit it wants to check.
+    """
+    return {**settings.REST_FRAMEWORK, "DEFAULT_THROTTLE_RATES": {"auth": rate, "auth-email": rate}}
 
 
 def code_from_outbox() -> str:
@@ -293,6 +303,96 @@ class SessionTests(TestCase):
 
     def test_no_token_is_refused(self) -> None:
         self.assertEqual(self.client.get("/auth/session/").status_code, 401)
+
+
+class ThrottlingTests(TestCase):
+    """sign_in, verify_code, register and request_password_reset take no credential to
+    gate on, so each is throttled by IP (accounts/throttling.py). The rate is overridden
+    down to a handful of requests a minute so a test does not have to fire off sixty
+    seconds of real traffic to reach it.
+    """
+
+    def setUp(self) -> None:
+        self.client = APIClient()
+        User.objects.create_user(email="a@example.com", password=GOOD_PASSWORD, role="professional", is_verified=True)
+        # DRF keeps throttle history in the default cache, keyed by IP. Every test in this
+        # class shares the test client's IP, so a leftover entry from one would make the
+        # next test's very first request already throttled.
+        cache.clear()
+
+    def tearDown(self) -> None:
+        cache.clear()
+
+    @override_settings(REST_FRAMEWORK=with_throttle_rate("10/min"))
+    def test_the_eleventh_sign_in_in_a_minute_is_throttled(self) -> None:
+        for _ in range(10):
+            response = self.client.post(
+                "/auth/sign-in/", {"email": "a@example.com", "password": "wrong"}, format="json"
+            )
+            self.assertEqual(response.status_code, 401)
+
+        response = self.client.post("/auth/sign-in/", {"email": "a@example.com", "password": "wrong"}, format="json")
+
+        # A cause, not DRF's default free-text 429: see accounts/exceptions.py. There is
+        # no reason in the app's union for "you are rate limited" (AuthService.ts), so this
+        # is 'unexpected' rather than a reason invented only for the server's own use.
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json(), {"reason": failures.UNEXPECTED})
+
+    @override_settings(REST_FRAMEWORK=with_throttle_rate("2/min"))
+    def test_sign_in_and_verify_code_share_one_budget(self) -> None:
+        # Both draw from the 'auth' scope (accounts/throttling.py): an attacker gains
+        # nothing by alternating between guessing a password and guessing a code.
+        self.client.post("/auth/sign-in/", {"email": "a@example.com", "password": "wrong"}, format="json")
+        self.client.post("/auth/verify/", {"email": "a@example.com", "code": "000000"}, format="json")
+
+        response = self.client.post("/auth/sign-in/", {"email": "a@example.com", "password": "wrong"}, format="json")
+
+        self.assertEqual(response.status_code, 429)
+
+    @override_settings(REST_FRAMEWORK=with_throttle_rate("2/min"))
+    def test_register_is_throttled(self) -> None:
+        for i in range(2):
+            self.client.post(
+                "/auth/register/",
+                {"email": f"new{i}@example.com", "password": GOOD_PASSWORD, "role": "professional"},
+                format="json",
+            )
+
+        response = self.client.post(
+            "/auth/register/",
+            {"email": "one-more@example.com", "password": GOOD_PASSWORD, "role": "professional"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json(), {"reason": failures.UNEXPECTED})
+
+    @override_settings(REST_FRAMEWORK=with_throttle_rate("2/min"))
+    def test_request_password_reset_is_throttled(self) -> None:
+        for _ in range(2):
+            self.client.post("/auth/password-reset/", {"email": "a@example.com"}, format="json")
+
+        response = self.client.post("/auth/password-reset/", {"email": "a@example.com"}, format="json")
+
+        self.assertEqual(response.status_code, 429)
+
+    @override_settings(REST_FRAMEWORK=with_throttle_rate("2/min"))
+    def test_register_and_password_reset_share_the_other_budget(self) -> None:
+        # Both draw from 'auth-email' rather than 'auth': each accepted call here sends an
+        # email, which is the resource being protected, and it is a separate budget from
+        # sign_in/verify_code so guessing a password cannot exhaust a legitimate
+        # registration's headroom.
+        self.client.post(
+            "/auth/register/",
+            {"email": "x@example.com", "password": GOOD_PASSWORD, "role": "professional"},
+            format="json",
+        )
+        self.client.post("/auth/password-reset/", {"email": "a@example.com"}, format="json")
+
+        response = self.client.post("/auth/password-reset/", {"email": "a@example.com"}, format="json")
+
+        self.assertEqual(response.status_code, 429)
 
 
 class FailureVocabularyTests(TestCase):

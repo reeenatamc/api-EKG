@@ -133,6 +133,12 @@ the adapter's job. Send it back as `Authorization: Token <key>`.
 `POST /studies/`, multipart: `image`, `imageWidth`, `imageHeight`, `metadata` (JSON, the
 app's `StudyMetadata` verbatim). Returns the app's `UploadReceipt`: `{remoteId, receivedAt}`.
 
+The image is capped at `STUDY_MAX_UPLOAD_SIZE_BYTES` (25 MB by default, above the 4-15 MB a
+phone photo actually runs) and `STUDY_MAX_UPLOAD_PIXELS` (50 megapixels), both checked in
+`studies/serializers.py` and both refused as `payload-rejected`. Neither limit is Pillow's
+own -- Pillow's `DecompressionBombError` only fires around 178 megapixels, a backstop for
+arbitrary callers rather than this contract, and it has nothing to say about bytes at all.
+
 ### `EcgAnalysisService`
 
 | Method | Endpoint |
@@ -160,6 +166,23 @@ Two reasons are never produced here. `network-unreachable` belongs to the app's 
 adapter: a request that arrived is evidence the network worked. `grid-not-detected` is
 `ecg-pipeline`'s doing, when the digitizer cannot find the grid it raises per-image and
 writes nothing, which arrives indistinguishable from any other unreadable image.
+
+### Rate limiting
+
+`register`, `verify_code`, `sign_in` and `request_password_reset` take no credential to
+prove who is asking. `verify_code` already caps how many wrong guesses one code tolerates
+(`MAX_VERIFICATION_ATTEMPTS`), but nothing else stopped a client from hammering `sign_in`
+with passwords or making `register`/`request_password_reset` send unlimited email, so all
+four are throttled by IP (`accounts/throttling.py`), in two scopes set by
+`DEFAULT_THROTTLE_RATES` and overridable with `AUTH_THROTTLE_RATE` and
+`AUTH_EMAIL_THROTTLE_RATE`. A throttled request still answers a cause, not DRF's default
+`{"detail": "..."}` (`accounts/exceptions.py`) -- there is no reason in the app's union for
+"you are rate limited", so it is `unexpected`.
+
+DRF keeps the request history behind this in the default cache. `LocMemCache` is fine for
+the one process this service runs as today; a deployment that runs several needs `CACHES`
+pointed at something shared (Redis, Memcached) or each process only ever sees its own share
+of the traffic.
 
 ---
 
@@ -274,14 +297,19 @@ degraded unconditionally there.
 ## Tests
 
 ```bash
-$VENV manage.py test           # 117 tests, ~2s
+$VENV manage.py test           # 135 tests, ~2s
 ```
 
 They cover the failure vocabularies, quad validation, the homography's direction, the
-calibration arithmetic and its gap handling, the queue's compare-and-swap, and the mount
-cross-check. What they do not cover is a real image through the digitizer and ECGFounder:
-that needs both sets of weights and tens of seconds per case, which makes it an integration
-test. `PipelineRunner._interpret` is patched where the merge logic is exercised.
+calibration arithmetic and its gap handling, the queue's compare-and-swap, the mount
+cross-check, and the throttling and upload-size limits above. What they do not cover is a
+real image through the digitizer and ECGFounder: that needs both sets of weights and tens
+of seconds per case, which makes it an integration test. `PipelineRunner._interpret` is
+patched where the merge logic is exercised.
 
 The suite runs with MD5 password hashing (`config/test_runner.py`). PBKDF2 took it from
-two seconds to half a minute, and a suite that slow stops being run.
+two seconds to half a minute, and a suite that slow stops being run. The same runner turns
+the auth throttle rates off by default, for the same reason: the suite calls those
+endpoints from one address far more than the production rate allows within the minute a
+run takes. Tests that exercise throttling itself turn a rate back on with
+`override_settings`.
