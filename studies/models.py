@@ -77,7 +77,8 @@ class Study(models.Model):
     class Meta:
         ordering = ["-received_at"]
         indexes = [models.Index(fields=["owner", "-received_at"])]
-        verbose_name_plural = "studies"
+        verbose_name = "estudio"
+        verbose_name_plural = "estudios"
 
     def __str__(self) -> str:
         return f"{self.anonymous_id} ({self.id})"
