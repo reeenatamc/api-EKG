@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import tempfile
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -256,13 +257,35 @@ class QueueTests(TestCase):
         # Keeping the old timestamps would describe a run that is no longer the current
         # one, and to_body would serve a queued analysis carrying last time's reason.
         analysis = self.make_analysis()
-        analysis.mark_failed(FAILURE_UNSUPPORTED_MOUNT)
+        analysis.mark_failed(FAILURE_UNSUPPORTED_MOUNT, diagnostics={"stage": "digitize"})
 
         analysis.requeue()
 
         self.assertIsNone(analysis.started_at)
         self.assertIsNone(analysis.completed_at)
         self.assertIsNone(analysis.payload)
+        # The diagnostics described that run. mark_finished only replaces them when it is
+        # handed some, so left here they would outlive the failure and sit on a ready row.
+        self.assertEqual(analysis.diagnostics, {})
+
+    def test_requeue_does_not_touch_a_row_a_worker_has_since_claimed(self) -> None:
+        # The app's queue retries, so two retries can read the same failed row. The first
+        # requeues it and a worker claims it; the second must then do nothing, or it puts
+        # a study that is being processed back to queued with attempts at zero, and the
+        # next worker runs it a second time.
+        analysis = self.make_analysis()
+        analysis.mark_failed(FAILURE_UNSUPPORTED_MOUNT)
+        stale = Analysis.objects.get(pk=analysis.pk)  # what the second request read
+
+        self.assertTrue(analysis.requeue())
+        claimed = Analysis.claim_next()
+        self.assertEqual(claimed.pk, analysis.pk)
+
+        self.assertFalse(stale.requeue())
+
+        analysis.refresh_from_db()
+        self.assertEqual(analysis.status, "processing")
+        self.assertEqual(analysis.attempts, 1)
 
     def test_a_repeatedly_failing_study_is_not_reclaimed_forever(self) -> None:
         analysis = self.make_analysis()
@@ -400,6 +423,64 @@ class MountCrossCheckTests(TestCase):
         body = self.check("standard-3x4", "Unknown layout")
 
         self.assertEqual(body["status"], STATUS_READY)
+
+
+class WorkdirCleanupTests(TestCase):
+    """A study's intermediate files are dropped once it is ready, and kept when it failed."""
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(email="a@example.com", password="a password", is_verified=True)
+        self.work_root = Path(tempfile.mkdtemp())
+        self.runner = PipelineRunner(work_root=self.work_root)
+
+    def run_with(self, record: dict) -> tuple[Analysis, Path]:
+        study = Study.objects.create(
+            owner=self.user,
+            anonymous_id="ECG-260806-0001",
+            captured_at=timezone.now(),
+            mount="standard-3x4",
+            quad=SQUARE_QUAD,
+            image=SimpleUploadedFile("ecg.png", png_bytes(), "image/png"),
+            image_width=200,
+            image_height=150,
+        )
+        analysis = Analysis.objects.create(study=study)
+        workdir = self.work_root / str(study.id)
+        (workdir / "output").mkdir(parents=True)
+        (workdir / "output" / "ecg_timeseries_canonical.csv").write_text("I,II\n1,2\n")
+
+        # No CSV in the record, so interpretation is skipped and no checkpoint is needed;
+        # what is under test is what happens to the directory afterwards.
+        with patch.object(PipelineRunner, "_digitize", return_value=record):
+            self.runner.run(analysis)
+        analysis.refresh_from_db()
+        return analysis, workdir
+
+    def test_a_ready_analysis_drops_its_intermediate_files(self) -> None:
+        analysis, workdir = self.run_with({"digitization": {"lead_layout": "standard_3x4"}, "degraded": False})
+
+        self.assertEqual(analysis.status, STATUS_READY)
+        self.assertFalse(workdir.exists())
+
+    def test_a_failed_analysis_keeps_them_for_inspection(self) -> None:
+        analysis, workdir = self.run_with({"digitization": {"lead_layout": "Unknown layout"}, "degraded": True})
+
+        self.assertEqual(analysis.status, STATUS_FAILED)
+        self.assertTrue(workdir.exists())
+
+    @override_settings(ECG_KEEP_WORK=True)
+    def test_the_setting_keeps_everything(self) -> None:
+        analysis, workdir = self.run_with({"digitization": {"lead_layout": "standard_3x4"}, "degraded": False})
+
+        self.assertEqual(analysis.status, STATUS_READY)
+        self.assertTrue(workdir.exists())
+
+    def test_the_pipeline_version_is_recorded(self) -> None:
+        # The pipeline is a separate repository that moves on its own; the row is the only
+        # place that ties a stored reading to the code that produced it.
+        analysis, _ = self.run_with({"digitization": {"lead_layout": "standard_3x4"}, "degraded": False})
+
+        self.assertRegex(analysis.diagnostics["pipeline_version"], r"^\d+\.\d+")
 
 
 class InterpretationMergeTests(TestCase):

@@ -158,6 +158,7 @@ class PipelineRunner:
         body = to_analysis(record, study_id=str(study.id), completed_at=timezone.now().isoformat())
 
         diagnostics = {
+            "pipeline_version": _pipeline_version(),
             "pathway": self.pathway,
             "warnings": record.get("warnings", []),
             "digitization": record.get("digitization"),
@@ -167,6 +168,14 @@ class PipelineRunner:
 
         body = self._apply_mount_cross_check(study, record, body, diagnostics)
         analysis.mark_finished(body, diagnostics)
+
+        # A ready analysis has everything it will ever serve in its payload and everything
+        # worth knowing about the run in its diagnostics, so its intermediate files (the
+        # rectified PNG, the digitizer's CSVs and debug images, about 9 MB per study) are
+        # done. A failed one keeps them: the CSV the digitizer actually wrote is what
+        # someone comparing against the corrected one, or against the image, will want.
+        if analysis.status == analysis_models.STATUS_READY and not settings.ECG_KEEP_WORK:
+            self.clean_workdir(str(study.id))
 
     def _corrected_csv(self, study: Study, csv_path: str, workdir: Path) -> str:
         """Rescale the digitized CSV for a non-standard print. Identity for a standard one.
@@ -276,6 +285,17 @@ def _unique(warnings: list[str]) -> list[str]:
     """
     seen: set[str] = set()
     return [w for w in warnings if not (w in seen or seen.add(w))]
+
+
+def _pipeline_version() -> str:
+    """Which ecg-pipeline produced this analysis.
+
+    Recorded per row because the pipeline is a separate repository and moves on its own;
+    without this, nothing ties a stored reading to the code that made it.
+    """
+    import ecg_pipeline
+
+    return str(getattr(ecg_pipeline, "__version__", "unknown"))
 
 
 def _traceback() -> str:

@@ -113,7 +113,7 @@ class Analysis(models.Model):
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
         }
 
-    def requeue(self) -> None:
+    def requeue(self) -> bool:
         """Put a failed analysis back in the queue, at the user's request.
 
         The app offers a retry on a failed study and had nothing to reach: POST is
@@ -130,25 +130,36 @@ class Analysis(models.Model):
         Attempts go back to zero. What the user is asking for is another try, and the
         counter exists to stop a study that kills the worker from being reclaimed
         forever, not to ration deliberate requests.
+
+        The write is conditional on the row still being failed, for the same reason
+        ``claim_next`` is: the app's queue retries, so two of these can arrive together.
+        With a plain save, the second would land after the first had requeued the row and a
+        worker had claimed it, and put it back to queued with attempts at zero while that
+        worker was still running it. A third worker would then claim it again, which is the
+        second run the view's comment promises never happens. Returns whether this call was
+        the one that requeued it; a False means someone else already did, which for the
+        caller is the same outcome.
         """
-        self.status = STATUS_QUEUED
-        self.failure = None
-        self.payload = None
-        self.attempts = 0
-        self.started_at = None
-        self.completed_at = None
-        self.requested_at = timezone.now()
-        self.save(
-            update_fields=[
-                "status",
-                "failure",
-                "payload",
-                "attempts",
-                "started_at",
-                "completed_at",
-                "requested_at",
-            ]
+        requeued = (
+            type(self)
+            .objects.filter(pk=self.pk, status=STATUS_FAILED)
+            .update(
+                status=STATUS_QUEUED,
+                failure=None,
+                payload=None,
+                attempts=0,
+                started_at=None,
+                completed_at=None,
+                requested_at=timezone.now(),
+                # The previous run's diagnostics go with its failure. They describe why
+                # that run failed, and left in place they would sit on a queued row and
+                # then, since mark_finished only overwrites them when given some, on a
+                # ready one.
+                diagnostics={},
+            )
         )
+        self.refresh_from_db()
+        return bool(requeued)
 
     def mark_processing(self) -> None:
         self.status = STATUS_PROCESSING
