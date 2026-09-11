@@ -36,7 +36,7 @@ $VENV -m pip install -e ../ecg-pipeline --no-deps   # --no-deps: everything is a
 `--no-deps` matters. Without it pip re-resolves torch and numpy and can quietly move the
 pinned pair.
 
-The version this service is built against is the tag CI installs, `v0.1.2` in
+The version this service is built against is the tag CI installs, `v0.1.3` in
 `.github/workflows/ci.yml`. An editable checkout on another commit works, but a reading
 made with it is not one the suite here vouched for; every analysis records the pipeline
 version it ran under in its `diagnostics`, so a stored result can always be traced back.
