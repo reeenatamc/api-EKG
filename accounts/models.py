@@ -177,4 +177,13 @@ class VerificationCode(models.Model):
         codes = cls.objects.filter(user=user)
         if purpose is not None:
             codes = codes.filter(purpose=purpose)
-        return codes.order_by("-created_at").first()
+
+        # The live code wins a tie on ``created_at``, and ties do happen: ``issue`` consumes
+        # the previous code and mints the next one in the same call, so the two timestamps
+        # are separated only by a password hash. Under the test runner's MD5 hasher, and on
+        # any platform whose clock is coarser than the work between those two writes, they
+        # land on the same tick. Ordering by ``-created_at`` alone then picks whichever row
+        # the database offers first, and when that is the superseded one the caller is told
+        # ``code-expired`` about a code that is merely wrong. The primary key is a UUID, so
+        # it cannot break the tie: it carries no order.
+        return codes.order_by("-created_at", models.F("consumed_at").desc(nulls_first=True)).first()

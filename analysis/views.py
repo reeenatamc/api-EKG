@@ -16,7 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from analysis.models import Analysis
+from analysis.models import STATUS_FAILED, Analysis
 from studies.models import Study
 
 
@@ -45,7 +45,14 @@ def study_analysis(request: Request, study_id: str) -> Response:
         return Response(analysis.to_body())
 
     # POST. Idempotent by design: the app's upload queue retries, and a second request
-    # must not start a second run or discard a finished one. ``get_or_create`` on the
-    # study's one-to-one is what makes that true even under two simultaneous requests.
+    # must not start a second run or discard a finished one.
+    #
+    # A FAILED ANALYSIS IS NEITHER OF THOSE, and requeueing it is what the app's retry
+    # button means. Without this, pressing it returned the same failed record and the
+    # button did nothing visible: each side was coherent alone and the pair was not.
     analysis, created = Analysis.objects.get_or_create(study=study)
+
+    if not created and analysis.status == STATUS_FAILED:
+        analysis.requeue()
+
     return Response(analysis.to_body(), status=201 if created else 200)
