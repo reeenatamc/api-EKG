@@ -186,6 +186,4 @@ class VerificationCode(models.Model):
         # the database offers first, and when that is the superseded one the caller is told
         # ``code-expired`` about a code that is merely wrong. The primary key is a UUID, so
         # it cannot break the tie: it carries no order.
-        return codes.order_by(
-            "-created_at", models.F("consumed_at").desc(nulls_first=True)
-        ).first()
+        return codes.order_by("-created_at", models.F("consumed_at").desc(nulls_first=True)).first()

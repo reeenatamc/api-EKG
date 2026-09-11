@@ -16,7 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 
-from analysis.models import Analysis, STATUS_FAILED
+from analysis.models import STATUS_FAILED, Analysis
 from studies.models import Study
 
 

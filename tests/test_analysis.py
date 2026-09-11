@@ -231,9 +231,7 @@ class QueueTests(TestCase):
         # to <= would let a worker reclaim the row it just took. What was missing is a
         # row that is actually stale, which is what the worker means by it: its own
         # cutoff is half an hour back.
-        Analysis.objects.filter(pk=analysis.pk).update(
-            started_at=timezone.now() - timedelta(hours=1)
-        )
+        Analysis.objects.filter(pk=analysis.pk).update(started_at=timezone.now() - timedelta(hours=1))
 
         reclaimed = Analysis.reclaim_stale(timezone.now())
 
