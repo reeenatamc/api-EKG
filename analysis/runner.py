@@ -163,6 +163,7 @@ class PipelineRunner:
             warnings=record.get("warnings", []),
             digitization=record.get("digitization"),
             signal_quality=record.get("signal_quality"),
+            signal_bridging=record.get("signal_bridging"),
             calibration_corrected=not study.has_standard_calibration,
             # Where the threshold that produced ``record["flagged"]`` came from -- explicit,
             # ecg-pipeline's own default, or "none" -- straight from ``interpret_csv`` via
@@ -214,12 +215,17 @@ class PipelineRunner:
         took the photograph, not the result, and a study must not fail because of it.
         """
         try:
-            from ecg_pipeline.contract import to_signal
+            from ecg_pipeline.contract import signal_bridging_report, to_signal
             from ecg_pipeline.interpret.waveform import load_canonical_csv
 
             layout = (record.get("digitization") or {}).get("lead_layout", "")
-            signal = to_signal(*load_canonical_csv(csv_path), lead_layout=layout)
+            canonical, names = load_canonical_csv(csv_path)
+            signal = to_signal(canonical, names, lead_layout=layout)
             analysis.mark_digitized(signal)
+            # What the contract bridged on the way to that signal: digitizer dropouts of a
+            # few milliseconds inside a printed stretch (see MAX_BRIDGED_GAP_SECONDS there).
+            # Kept in the record so it reaches diagnostics; the trace itself never says.
+            record["signal_bridging"] = signal_bridging_report(canonical, names)
         except Exception:
             logger.exception("failed to store the early signal for study %s", analysis.study_id)
 
