@@ -12,4 +12,5 @@ from analysis import views
 
 urlpatterns = [
     path("studies/<uuid:study_id>/analysis/", views.study_analysis, name="study-analysis"),
+    path("studies/<uuid:study_id>/signal/", views.study_signal, name="study-signal"),
 ]

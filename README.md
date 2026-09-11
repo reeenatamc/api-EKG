@@ -145,9 +145,19 @@ arbitrary callers rather than this contract, and it has nothing to say about byt
 |---|---|
 | `request` | `POST /studies/{id}/analysis/` |
 | `get` | `GET /studies/{id}/analysis/`, `404` is the contract's `null` |
+| n/a | `GET /studies/{id}/signal/` |
 
-Both answer a complete `EcgAnalysis`. `POST` is idempotent: the app's queue retries, and a
-second request must not start a second run or discard a finished one.
+Both `request` and `get` answer a complete `EcgAnalysis`. `POST` is idempotent: the app's
+queue retries, and a second request must not start a second run or discard a finished one.
+
+`GET /studies/{id}/signal/` has no counterpart in the contract either, same reason as
+`GET /auth/session/` above: it is a convenience for a client that only wants the trace, not
+the whole `EcgAnalysis` shape. The signal it answers is exactly `EcgAnalysis.signal`, and it
+exists well before the rest of the body does -- digitization is the ~15 second stage,
+interpretation the ~30 to 55 second one, so `analysis/get` keeps returning a `processing`
+body with a populated `signal` while this and that agree, and this stays populated on a
+failure that happened after digitization. It 404s until a signal is stored, the same owner
+filtering as `analysis/get`.
 
 ### Refusals are causes, not messages
 
@@ -297,7 +307,7 @@ degraded unconditionally there.
 ## Tests
 
 ```bash
-$VENV manage.py test           # 135 tests, ~2s
+$VENV manage.py test           # 145 tests, ~2s
 ```
 
 They cover the failure vocabularies, quad validation, the homography's direction, the
