@@ -51,7 +51,6 @@ def png_bytes(width: int = 200, height: int = 150) -> bytes:
     return buffer.getvalue()
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
 class AnalysisEndpointTests(TestCase):
     def setUp(self) -> None:
         self.user = User.objects.create_user(email="a@example.com", password="a password", is_verified=True)
@@ -181,7 +180,6 @@ class AnalysisEndpointTests(TestCase):
         self.assertEqual(self.client.get(self.url()).status_code, 401)
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
 class QueueTests(TestCase):
     def setUp(self) -> None:
         self.user = User.objects.create_user(email="a@example.com", password="a password", is_verified=True)
