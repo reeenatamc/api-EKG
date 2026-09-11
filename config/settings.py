@@ -221,4 +221,4 @@ ECG_WORKER_POLL_SECONDS = float(os.environ.get("ECG_WORKER_POLL_SECONDS", "2.0")
 # Keep every study's intermediate files under WORK_ROOT after a successful run. Off by
 # default: a ready analysis carries all it serves in its own row, and the files are about
 # 9 MB per study. Failed runs keep theirs regardless, for inspection.
-ECG_KEEP_WORK = os.environ.get("ECG_KEEP_WORK", "") in ("1", "true", "yes")
+ECG_KEEP_WORK = _flag("ECG_KEEP_WORK")

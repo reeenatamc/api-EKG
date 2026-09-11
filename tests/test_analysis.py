@@ -433,7 +433,7 @@ class WorkdirCleanupTests(TestCase):
         self.work_root = Path(tempfile.mkdtemp())
         self.runner = PipelineRunner(work_root=self.work_root)
 
-    def run_with(self, record: dict) -> tuple[Analysis, Path]:
+    def run_with(self, record: dict | None | Exception) -> tuple[Analysis, Path]:
         study = Study.objects.create(
             owner=self.user,
             anonymous_id="ECG-260806-0001",
@@ -450,8 +450,13 @@ class WorkdirCleanupTests(TestCase):
         (workdir / "output" / "ecg_timeseries_canonical.csv").write_text("I,II\n1,2\n")
 
         # No CSV in the record, so interpretation is skipped and no checkpoint is needed;
-        # what is under test is what happens to the directory afterwards.
-        with patch.object(PipelineRunner, "_digitize", return_value=record):
+        # what is under test is what happens to the directory afterwards. An exception
+        # stands in for the digitizer blowing up.
+        with patch.object(PipelineRunner, "_digitize") as digitize:
+            if isinstance(record, Exception):
+                digitize.side_effect = record
+            else:
+                digitize.return_value = record
             self.runner.run(analysis)
         analysis.refresh_from_db()
         return analysis, workdir
@@ -481,6 +486,17 @@ class WorkdirCleanupTests(TestCase):
         analysis, _ = self.run_with({"digitization": {"lead_layout": "standard_3x4"}, "degraded": False})
 
         self.assertRegex(analysis.diagnostics["pipeline_version"], r"^\d+\.\d+")
+
+    def test_the_pipeline_version_is_recorded_on_failures_too(self) -> None:
+        # A study that failed under one version and is retried under another is the case
+        # where knowing which one it was matters most.
+        unreadable, _ = self.run_with(None)
+        self.assertEqual(unreadable.status, STATUS_FAILED)
+        self.assertIn("pipeline_version", unreadable.diagnostics)
+
+        crashed, _ = self.run_with(RuntimeError("boom"))
+        self.assertEqual(crashed.failure, FAILURE_SERVER_ERROR)
+        self.assertIn("pipeline_version", crashed.diagnostics)
 
 
 class InterpretationMergeTests(TestCase):

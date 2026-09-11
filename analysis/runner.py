@@ -131,7 +131,7 @@ class PipelineRunner:
             logger.exception("analysis failed for study %s", study.id)
             analysis.mark_failed(
                 analysis_models.FAILURE_SERVER_ERROR,
-                diagnostics={"stage": "runner", "detail": _traceback()},
+                diagnostics=self._diagnostics(stage="runner", detail=_traceback()),
             )
 
     def _run_inner(self, analysis: "analysis_models.Analysis", study: Study, workdir: Path) -> None:
@@ -145,7 +145,7 @@ class PipelineRunner:
             # per-image upstream and arrives here indistinguishable from any other.
             analysis.mark_failed(
                 analysis_models.FAILURE_UNREADABLE_IMAGE,
-                diagnostics={"stage": "digitize", "detail": "the digitizer produced no output"},
+                diagnostics=self._diagnostics(stage="digitize", detail="the digitizer produced no output"),
             )
             return
 
@@ -157,14 +157,13 @@ class PipelineRunner:
 
         body = to_analysis(record, study_id=str(study.id), completed_at=timezone.now().isoformat())
 
-        diagnostics = {
-            "pipeline_version": _pipeline_version(),
-            "pathway": self.pathway,
-            "warnings": record.get("warnings", []),
-            "digitization": record.get("digitization"),
-            "signal_quality": record.get("signal_quality"),
-            "calibration_corrected": not study.has_standard_calibration,
-        }
+        diagnostics = self._diagnostics(
+            pathway=self.pathway,
+            warnings=record.get("warnings", []),
+            digitization=record.get("digitization"),
+            signal_quality=record.get("signal_quality"),
+            calibration_corrected=not study.has_standard_calibration,
+        )
 
         body = self._apply_mount_cross_check(study, record, body, diagnostics)
         analysis.mark_finished(body, diagnostics)
@@ -265,6 +264,15 @@ class PipelineRunner:
             "failure": analysis_models.FAILURE_UNSUPPORTED_MOUNT,
             "completedAt": None,
         }
+
+    def _diagnostics(self, **fields: Any) -> dict[str, Any]:
+        """Every diagnostics dict this runner writes, ready or failed, starts the same way.
+
+        The pipeline version goes on failures too: a study that failed under one version
+        and is retried under another is exactly the case where knowing which one it was
+        matters.
+        """
+        return {"pipeline_version": _pipeline_version(), **fields}
 
     def clean_workdir(self, study_id: str) -> None:
         """Drop a study's intermediate files. The uploaded image is not touched."""
