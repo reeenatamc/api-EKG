@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import io
 import json
-import tempfile
 from typing import Any
 
 from django.contrib.auth import get_user_model
@@ -54,7 +53,6 @@ def metadata(**overrides: Any) -> dict[str, Any]:
     return body
 
 
-@override_settings(MEDIA_ROOT=tempfile.mkdtemp())
 class UploadTests(TestCase):
     def setUp(self) -> None:
         self.user = User.objects.create_user(email="a@example.com", password="a password", is_verified=True)

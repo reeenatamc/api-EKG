@@ -312,4 +312,6 @@ two seconds to half a minute, and a suite that slow stops being run. The same ru
 the auth throttle rates off by default, for the same reason: the suite calls those
 endpoints from one address far more than the production rate allows within the minute a
 run takes. Tests that exercise throttling itself turn a rate back on with
-`override_settings`.
+`override_settings`. The same runner also points MEDIA_ROOT and WORK_ROOT at a fresh
+temporary directory for the run, so a test never writes under this checkout's `media/` or
+`work/`.
