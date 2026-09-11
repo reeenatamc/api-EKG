@@ -37,6 +37,9 @@ STATUS_CHOICES = [
 # unreadable image. See the note in ``ecg_pipeline.contract.failure_reason``.
 FAILURE_UNREADABLE_IMAGE = "unreadable-image"
 FAILURE_GRID_NOT_DETECTED = "grid-not-detected"
+# Read and laid out, but the trace came back too fragmented to interpret: no lead carries
+# signal, or none was printed at full length. ecg_pipeline.contract decides it.
+FAILURE_TRACE_INCOMPLETE = "trace-incomplete"
 FAILURE_UNSUPPORTED_MOUNT = "unsupported-mount"
 FAILURE_SERVER_ERROR = "server-error"
 FAILURE_UNEXPECTED = "unexpected"
@@ -45,6 +48,7 @@ ANALYSIS_FAILURE_REASONS = frozenset(
     {
         FAILURE_UNREADABLE_IMAGE,
         FAILURE_GRID_NOT_DETECTED,
+        FAILURE_TRACE_INCOMPLETE,
         FAILURE_UNSUPPORTED_MOUNT,
         FAILURE_SERVER_ERROR,
         FAILURE_UNEXPECTED,

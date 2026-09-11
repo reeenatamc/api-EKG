@@ -335,6 +335,7 @@ class FailureVocabularyTests(TestCase):
         app_side = {
             "unreadable-image",
             "grid-not-detected",
+            "trace-incomplete",
             "unsupported-mount",
             "network-unreachable",
             "server-error",

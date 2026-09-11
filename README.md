@@ -36,7 +36,7 @@ $VENV -m pip install -e ../ecg-pipeline --no-deps   # --no-deps: everything is a
 `--no-deps` matters. Without it pip re-resolves torch and numpy and can quietly move the
 pinned pair.
 
-The version this service is built against is the tag CI installs, `v0.1.0` in
+The version this service is built against is the tag CI installs, `v0.1.1` in
 `.github/workflows/ci.yml`. An editable checkout on another commit works, but a reading
 made with it is not one the suite here vouched for; every analysis records the pipeline
 version it ran under in its `diagnostics`, so a stored result can always be traced back.
@@ -252,10 +252,6 @@ Real limits, not TODOs. Each needs a decision rather than a patch.
 delineate waves, and the app's `EcgMeasurements` is all-or-nothing, so there is no honest
 partial answer, filling PR and QT with anything would be inventing measurements of a
 patient. Closing this means wave delineation in `ecg-pipeline`, not a change here.
-
-**`AnalysisFailureReason` has no case for "digitized, but too poor to read".** A degraded
-result currently lands on `unexpected`, which is not what happened. The fix is a new reason
-in the app's union; the server side is one constant.
 
 **There is no set-a-new-password endpoint.** `AuthService` has one `verifyCode` and no
 method for submitting a password, so a reset code is redeemed through the same call and the
