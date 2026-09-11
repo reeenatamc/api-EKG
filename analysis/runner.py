@@ -219,6 +219,15 @@ class PipelineRunner:
         merged["digitization"] = digitization
         merged["preprocessing"] = preprocessing
         merged["warnings"] = _unique(digitization_warnings + list(interpreted.get("warnings", [])))
+        # The gate ids are what ``contract.failure_reason`` reads first, and ``pipeline.run``
+        # only attaches "interpretation-error" on its own interpretation branch, which this
+        # runner does not use. Without it here, a crashed interpretation would still be
+        # degraded but its cause would fall through to 'unexpected' instead of
+        # 'server-error', which is the one the app offers a retry for.
+        gates = list(record.get("gates", []))
+        if "error" in interpreted and "interpretation-error" not in gates:
+            gates.append("interpretation-error")
+        merged["gates"] = gates
         merged["degraded"] = (
             was_degraded
             or bool(interpreted.get("degraded"))

@@ -514,12 +514,42 @@ class InterpretationMergeTests(TestCase):
 
     def test_a_clean_record_stays_clean(self) -> None:
         merged = self.merge(
-            {"digitization": {"lead_layout": "standard_3x4"}, "warnings": [], "degraded": False},
+            {"digitization": {"lead_layout": "standard_3x4"}, "warnings": [], "degraded": False, "gates": []},
             {"topk": [{"label": "SINUS RHYTHM", "prob": 0.9}], "degraded": False},
         )
 
         self.assertFalse(merged["degraded"])
         self.assertEqual(len(merged["topk"]), 1)
+        self.assertEqual(merged["gates"], [])
+
+    def test_a_crashed_interpretation_is_a_server_error_by_its_gate_id(self) -> None:
+        # contract.failure_reason reads the gate ids before anything else, and
+        # pipeline.run only attaches this one on the branch the runner does not use.
+        # Without it, a crash here surfaced as 'unexpected' rather than 'server-error',
+        # which is the cause the app offers a retry for.
+        from ecg_pipeline.contract import failure_reason
+
+        merged = self.merge(
+            {"digitization": {"lead_layout": "standard_3x4"}, "warnings": [], "degraded": False, "gates": []},
+            RuntimeError("boom"),
+        )
+
+        self.assertTrue(merged["degraded"])
+        self.assertIn("interpretation-error", merged["gates"])
+        self.assertEqual(failure_reason(merged), FAILURE_SERVER_ERROR)
+
+    def test_the_digitization_gates_survive_the_merge(self) -> None:
+        merged = self.merge(
+            {
+                "digitization": {"lead_layout": "standard_3x4_with_r1"},
+                "warnings": [],
+                "degraded": True,
+                "gates": ["rhythm-strip-unverified"],
+            },
+            {"topk": [{"label": "SINUS RHYTHM", "prob": 0.9}], "degraded": False},
+        )
+
+        self.assertEqual(merged["gates"], ["rhythm-strip-unverified"])
 
     def test_a_degraded_digitization_stays_degraded_however_confident_the_model_is(self) -> None:
         # The failure mode ecg-pipeline exists to guard against: a confident probability
