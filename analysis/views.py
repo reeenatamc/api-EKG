@@ -56,3 +56,21 @@ def study_analysis(request: Request, study_id: str) -> Response:
         analysis.requeue()
 
     return Response(analysis.to_body(), status=201 if created else 200)
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def study_signal(request: Request, study_id: str) -> Response:
+    """The digitized trace on its own, for a client that only wants it.
+
+    ``study_analysis`` already carries ``signal`` in its body once one exists -- while
+    processing, and on a failure that came after digitization -- so this adds nothing new
+    to compute. It exists for a caller that wants the trace without the rest of the
+    ``EcgAnalysis`` shape, and 404s for exactly as long as ``study_analysis`` would answer
+    a null ``signal``: no analysis at all, or one that has not been digitized yet.
+    """
+    study = _study_for(request, study_id)
+    analysis = Analysis.objects.filter(study=study).first()
+    if analysis is None or analysis.signal is None:
+        return Response(status=404)
+    return Response(analysis.signal)

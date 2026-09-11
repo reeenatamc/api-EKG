@@ -153,6 +153,7 @@ class PipelineRunner:
         if csv_path:
             csv_path = self._corrected_csv(study, csv_path, workdir)
             record["source_csv"] = csv_path
+            self._store_early_signal(analysis, record, csv_path)
             record = self._merge_interpretation(record, csv_path)
 
         body = to_analysis(record, study_id=str(study.id), completed_at=timezone.now().isoformat())
@@ -194,6 +195,28 @@ class PipelineRunner:
             study.gain_mm_per_millivolt,
         )
         return str(destination)
+
+    def _store_early_signal(self, analysis: "analysis_models.Analysis", record: dict[str, Any], csv_path: str) -> None:
+        """Store the digitized trace as soon as it exists, well before interpretation.
+
+        Digitization is the ~15 second stage; interpretation is the ~30 to 55 second one,
+        and the one that can still fail. Reading ``csv_path`` after ``_corrected_csv`` means
+        the stored signal already carries the calibration correction, the same one the
+        finished payload's signal will carry. Built the same way ``to_analysis`` builds its
+        own, including the right-sided relabel, so the two never disagree.
+
+        Never allowed to fail the analysis: the early signal is a convenience for whoever
+        took the photograph, not the result, and a study must not fail because of it.
+        """
+        try:
+            from ecg_pipeline.contract import to_signal
+            from ecg_pipeline.interpret.waveform import load_canonical_csv
+
+            layout = (record.get("digitization") or {}).get("lead_layout", "")
+            signal = to_signal(*load_canonical_csv(csv_path), lead_layout=layout)
+            analysis.mark_digitized(signal)
+        except Exception:
+            logger.exception("failed to store the early signal for study %s", analysis.study_id)
 
     def _merge_interpretation(self, record: dict[str, Any], csv_path: str) -> dict[str, Any]:
         """Interpret, and fold the result into the digitization record.

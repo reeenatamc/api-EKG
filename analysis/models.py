@@ -71,6 +71,11 @@ class Analysis(models.Model):
     # The EcgAnalysis body as ecg_pipeline.contract emitted it. Null until a run finishes.
     payload = models.JSONField(null=True, blank=True)
 
+    # The digitized trace, stored as soon as it exists -- tens of seconds before
+    # interpretation finishes, and even when interpretation never does. See
+    # ``mark_digitized``. Null until then.
+    signal = models.JSONField(null=True, blank=True)
+
     failure = models.CharField(max_length=32, null=True, blank=True)
 
     requested_at = models.DateTimeField(default=timezone.now)
@@ -110,7 +115,7 @@ class Analysis(models.Model):
         return {
             "studyId": str(self.study_id),
             "status": self.status,
-            "signal": None,
+            "signal": self.signal,
             "measurements": None,
             "observations": [],
             "failure": self.failure,
@@ -151,6 +156,7 @@ class Analysis(models.Model):
                 status=STATUS_QUEUED,
                 failure=None,
                 payload=None,
+                signal=None,
                 attempts=0,
                 started_at=None,
                 completed_at=None,
@@ -170,6 +176,19 @@ class Analysis(models.Model):
         self.started_at = timezone.now()
         self.attempts += 1
         self.save(update_fields=["status", "started_at", "attempts"])
+
+    def mark_digitized(self, signal: dict[str, Any]) -> None:
+        """Record the digitized trace as soon as it exists.
+
+        Digitization is the fast stage, roughly 15 seconds against the 30 to 55 the whole
+        run takes; interpretation is the slow one and the one that can still fail. Storing
+        the signal here, well before ``mark_finished``, is what lets the app show the
+        person who took the photograph what was read while interpretation is still going,
+        and lets it keep showing that trace if interpretation goes on to fail. The status
+        is untouched: this is not a state transition, just data becoming available.
+        """
+        self.signal = signal
+        self.save(update_fields=["signal"])
 
     @classmethod
     def claim_next(cls) -> "Analysis | None":
@@ -235,7 +254,10 @@ class Analysis(models.Model):
         self.payload = {
             "studyId": str(self.study_id),
             "status": STATUS_FAILED,
-            "signal": None,
+            # Not necessarily None: a failure after digitization -- a server error in
+            # interpretation, an unsupported-mount refusal from the cross-check -- still
+            # has a trace worth showing to whoever took the photograph.
+            "signal": self.signal,
             "measurements": None,
             "observations": [],
             "failure": reason,

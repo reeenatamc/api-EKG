@@ -17,6 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import numpy as np
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -24,6 +25,7 @@ from django.utils import timezone
 from PIL import Image
 from rest_framework.test import APIClient
 
+from analysis.calibration import write_canonical_csv
 from analysis.models import (
     ANALYSIS_FAILURE_REASONS,
     FAILURE_SERVER_ERROR,
@@ -43,6 +45,10 @@ User = get_user_model()
 ECG_ANALYSIS_KEYS = {"studyId", "status", "signal", "measurements", "observations", "failure", "completedAt"}
 
 SQUARE_QUAD = [{"x": 0.0, "y": 0.0}, {"x": 200.0, "y": 0.0}, {"x": 200.0, "y": 150.0}, {"x": 0.0, "y": 150.0}]
+
+# A stand-in for what to_signal actually produces -- these tests are not about its shape,
+# only about when the row carries it and when a request answers it.
+SAMPLE_SIGNAL = {"samplingRateHz": 500, "durationSeconds": 10.0, "leads": []}
 
 
 def png_bytes(width: int = 200, height: int = 150) -> bytes:
@@ -72,6 +78,9 @@ class AnalysisEndpointTests(TestCase):
 
     def url(self, study: Study | None = None) -> str:
         return f"/studies/{(study or self.study).id}/analysis/"
+
+    def signal_url(self, study: Study | None = None) -> str:
+        return f"/studies/{(study or self.study).id}/signal/"
 
     def test_getting_an_analysis_nobody_requested_is_not_found(self) -> None:
         # The app's ``get`` is specified to answer null for a study the server does not
@@ -178,6 +187,31 @@ class AnalysisEndpointTests(TestCase):
         self.client.force_authenticate(None)
 
         self.assertEqual(self.client.get(self.url()).status_code, 401)
+
+    def test_the_signal_endpoint_404s_until_one_is_stored_then_answers_it(self) -> None:
+        # No analysis at all yet.
+        self.assertEqual(self.client.get(self.signal_url()).status_code, 404)
+
+        self.client.post(self.url())
+        # An analysis exists now, but nothing has been digitized.
+        self.assertEqual(self.client.get(self.signal_url()).status_code, 404)
+
+        Analysis.objects.get().mark_digitized(SAMPLE_SIGNAL)
+
+        response = self.client.get(self.signal_url())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), SAMPLE_SIGNAL)
+
+    def test_the_signal_endpoint_is_filtered_by_owner_like_the_analysis_is(self) -> None:
+        stranger = User.objects.create_user(email="c@example.com", password="a password", is_verified=True)
+        theirs = self.make_study(stranger)
+
+        self.assertEqual(self.client.get(self.signal_url(theirs)).status_code, 404)
+
+    def test_the_signal_endpoint_refuses_an_anonymous_caller(self) -> None:
+        self.client.force_authenticate(None)
+
+        self.assertEqual(self.client.get(self.signal_url()).status_code, 401)
 
 
 class QueueTests(TestCase):
@@ -325,6 +359,73 @@ class QueueTests(TestCase):
 
         self.assertEqual(analysis.status, STATUS_FAILED)
         self.assertEqual(analysis.failure, "unreadable-image")
+
+
+class SignalTests(TestCase):
+    """The digitized trace, stored well before interpretation finishes and kept through failure.
+
+    Digitization is the ~15 second stage; interpretation is the ~30 to 55 second one, and
+    the one that can still fail. ``mark_digitized`` is what lets the trace reach the app
+    while interpretation is still running, and stay visible if it goes on to fail.
+    """
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(email="a@example.com", password="a password", is_verified=True)
+
+    def make_analysis(self) -> Analysis:
+        study = Study.objects.create(
+            owner=self.user,
+            anonymous_id="ECG-260806-0002",
+            captured_at=timezone.now(),
+            mount="standard-3x4",
+            quad=SQUARE_QUAD,
+            image=SimpleUploadedFile("ecg.png", png_bytes(), "image/png"),
+            image_width=200,
+            image_height=150,
+        )
+        return Analysis.objects.create(study=study)
+
+    def test_mark_digitized_does_not_change_the_status(self) -> None:
+        analysis = self.make_analysis()
+        analysis.mark_processing()
+
+        analysis.mark_digitized(SAMPLE_SIGNAL)
+
+        self.assertEqual(analysis.status, "processing")
+        self.assertEqual(analysis.signal, SAMPLE_SIGNAL)
+
+    def test_to_body_carries_the_signal_while_still_processing(self) -> None:
+        analysis = self.make_analysis()
+        analysis.mark_processing()
+        analysis.mark_digitized(SAMPLE_SIGNAL)
+
+        body = analysis.to_body()
+
+        self.assertEqual(body["status"], "processing")
+        self.assertEqual(body["signal"], SAMPLE_SIGNAL)
+
+    def test_mark_failed_keeps_a_signal_stored_before_it(self) -> None:
+        # A server error in interpretation, or an unsupported-mount refusal from the
+        # cross-check, both happen after digitization -- the trace is still worth showing.
+        analysis = self.make_analysis()
+        analysis.mark_digitized(SAMPLE_SIGNAL)
+
+        analysis.mark_failed(FAILURE_SERVER_ERROR)
+
+        self.assertEqual(analysis.signal, SAMPLE_SIGNAL)
+        self.assertEqual(analysis.to_body()["signal"], SAMPLE_SIGNAL)
+
+    def test_requeue_clears_the_signal(self) -> None:
+        # requeue clears everything the previous run left behind; a stale trace from a
+        # failed attempt must not survive onto the run that replaces it.
+        analysis = self.make_analysis()
+        analysis.mark_digitized(SAMPLE_SIGNAL)
+        analysis.mark_failed(FAILURE_SERVER_ERROR)
+
+        analysis.requeue()
+        analysis.refresh_from_db()
+
+        self.assertIsNone(analysis.signal)
 
 
 class FailureVocabularyTests(TestCase):
@@ -496,6 +597,62 @@ class WorkdirCleanupTests(TestCase):
         crashed, _ = self.run_with(RuntimeError("boom"))
         self.assertEqual(crashed.failure, FAILURE_SERVER_ERROR)
         self.assertIn("pipeline_version", crashed.diagnostics)
+
+
+class EarlySignalRunnerTests(TestCase):
+    """The runner stores the digitized trace before it ever calls mark_finished."""
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(email="a@example.com", password="a password", is_verified=True)
+        self.work_root = Path(tempfile.mkdtemp())
+        self.runner = PipelineRunner(work_root=self.work_root)
+
+    def test_the_signal_is_on_the_row_before_mark_finished_is_called(self) -> None:
+        study = Study.objects.create(
+            owner=self.user,
+            anonymous_id="ECG-260806-0004",
+            captured_at=timezone.now(),
+            mount="standard-3x4",
+            quad=SQUARE_QUAD,
+            image=SimpleUploadedFile("ecg.png", png_bytes(), "image/png"),
+            image_width=200,
+            image_height=150,
+        )
+        analysis = Analysis.objects.create(study=study)
+        workdir = self.work_root / str(study.id)
+        (workdir / "output").mkdir(parents=True)
+        csv_path = workdir / "output" / "ecg_timeseries_canonical.csv"
+
+        # A real, tiny canonical CSV -- 12 leads, a handful of samples -- read back by
+        # to_signal exactly as it would read the digitizer's own output.
+        names = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
+        canonical = np.tile(np.array([0.1, 0.2, 0.3, 0.2, 0.1]), (12, 1))
+        write_canonical_csv(csv_path, canonical, names)
+
+        record = {
+            "digitization": {"lead_layout": "standard_3x4"},
+            "source_csv": str(csv_path),
+            "warnings": [],
+            "degraded": False,
+            "gates": [],
+        }
+        seen: dict = {}
+
+        with (
+            patch.object(PipelineRunner, "_digitize", return_value=record),
+            patch.object(PipelineRunner, "_interpret", return_value={"topk": [], "degraded": False}),
+            patch.object(Analysis, "mark_finished") as mark_finished,
+        ):
+            mark_finished.side_effect = lambda *a, **k: seen.setdefault("signal_at_finish", analysis.signal)
+            self.runner.run(analysis)
+
+        self.assertIsNotNone(seen.get("signal_at_finish"))
+        self.assertEqual(seen["signal_at_finish"]["samplingRateHz"], 500)
+        self.assertEqual(len(seen["signal_at_finish"]["leads"]), 12)
+        # The row itself, not just what mark_finished saw -- mark_finished was mocked out,
+        # so this is what actually persisted.
+        analysis.refresh_from_db()
+        self.assertIsNotNone(analysis.signal)
 
 
 class InterpretationMergeTests(TestCase):
