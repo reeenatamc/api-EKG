@@ -751,3 +751,14 @@ class InterpretationMergeTests(TestCase):
         )
 
         self.assertEqual(merged["digitization"], {"lead_layout": "standard_3x4"})
+
+    def test_threshold_source_survives_the_merge(self) -> None:
+        # interpret_csv always sets threshold_source (explicit, ecg-pipeline's own default,
+        # or "none"); it reaches the merged record through the plain dict spread, same as
+        # any other interpretation field, and from there into the runner's diagnostics.
+        merged = self.merge(
+            {"digitization": {"lead_layout": "standard_3x4"}, "warnings": [], "degraded": False},
+            {"topk": [], "degraded": False, "threshold_source": "default:thresholds_1lead_II.json"},
+        )
+
+        self.assertEqual(merged["threshold_source"], "default:thresholds_1lead_II.json")

@@ -244,6 +244,16 @@ ECG_PATHWAY = os.environ.get("ECG_PATHWAY", "rhythm")
 ECG_DEVICE = os.environ.get("ECG_DEVICE", "cpu")
 ECG_TOP_K = int(os.environ.get("ECG_TOP_K", "10"))
 
+# ecg-pipeline resolves its per-class thresholds from $ECGFOUNDER_THRESHOLDS_DIR, read once
+# at import time by interpret_ecg.py -- the same reason ECG_PIPELINE_HOME is handled above,
+# before anything else here imports ecg_pipeline. Unset by default: interpret_csv then falls
+# back to ecg-pipeline's own configs/thresholds/, which is the normal case (see that
+# repository's README). This is a directory override only, never an opt-in: whether
+# thresholds are applied at all is decided in ecg-pipeline, not here.
+ECG_THRESHOLDS_DIR = os.environ.get("ECG_THRESHOLDS_DIR")
+if ECG_THRESHOLDS_DIR:
+    os.environ["ECGFOUNDER_THRESHOLDS_DIR"] = ECG_THRESHOLDS_DIR
+
 # Seconds a worker waits between polls of an empty queue.
 ECG_WORKER_POLL_SECONDS = float(os.environ.get("ECG_WORKER_POLL_SECONDS", "2.0"))
 
