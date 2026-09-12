@@ -11,6 +11,11 @@ db.sqlite3
 media/
 work/
 
+# collectstatic's output (docker/entrypoint-api.sh) and scripts/backup.sh's default
+# destination -- both generated, and the second one is a database dump plus real images.
+staticfiles/
+backups/
+
 .DS_Store
 .idea/
 .vscode/

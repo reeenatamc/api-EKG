@@ -27,6 +27,8 @@ unlimited email. A throttled request is turned into a cause, not DRF's default f
 
 from __future__ import annotations
 
+import logging
+
 from django.contrib.auth import get_user_model
 from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
@@ -46,6 +48,8 @@ from accounts.serializers import (
     VerifyCodeSerializer,
 )
 from accounts.throttling import AuthEmailRateThrottle, AuthRateThrottle
+
+logger = logging.getLogger(__name__)
 
 User = get_user_model()
 
@@ -252,3 +256,30 @@ def current_session(request: Request) -> Response:
     upload.
     """
     return Response({"session": failures.session_body(request.user, "")["session"]})
+
+
+@api_view(["DELETE"])
+@permission_classes([IsAuthenticated])
+def delete_account(request: Request) -> Response:
+    """Erase the account: every study, every analysis, and every file either wrote.
+
+    Google Play requires that an app offering in-app account creation also offer deletion
+    from inside the app (see README, "Despliegue"). There is no confirmation step here
+    beyond the bearer token itself -- the same proof ``sign_out`` already trusts -- because
+    this service has no second factor to ask for; a password re-prompt before calling this
+    is the app's call to make, not this endpoint's.
+
+    ``request.user.delete()`` cascades through ``Study.owner`` and ``Analysis.study``
+    (both ``on_delete=CASCADE``), and ``studies/signals.py`` removes each study's image and
+    work directory on the way out -- the same cleanup a single study's own deletion gets.
+    The app has no cause for anything more specific than 'unexpected' here, so a failure
+    partway through -- inside the transaction, so nothing is left half-deleted -- reports
+    that rather than inventing a reason only this endpoint would ever produce.
+    """
+    try:
+        with transaction.atomic():
+            request.user.delete()
+    except Exception:
+        logger.exception("could not delete account %s", request.user.pk)
+        return failures.failure(failures.UNEXPECTED)
+    return Response(status=204)

@@ -1,0 +1,15 @@
+.git
+.github
+.env
+db.sqlite3
+media/
+work/
+staticfiles/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+.idea/
+.vscode/
+backups/

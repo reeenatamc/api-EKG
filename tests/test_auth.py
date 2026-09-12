@@ -7,14 +7,20 @@ with the right status and the wrong reason is a bug that shows the user the wron
 
 from __future__ import annotations
 
+import io
 from datetime import timedelta
+from pathlib import Path
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.core.cache import cache
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from django.utils import timezone
+from PIL import Image
+from rest_framework.authtoken.models import Token
 from rest_framework.test import APIClient
 
 from accounts import failures
@@ -25,8 +31,20 @@ from accounts.models import (
     VERIFICATION_WINDOW_SECONDS,
     VerificationCode,
 )
+from studies.models import Study
 
 User = get_user_model()
+
+# A quad shape is enough to satisfy the JSONField at the ORM level; only the upload
+# serializer validates its geometry, and these tests create studies directly.
+SQUARE_QUAD = [{"x": 0.0, "y": 0.0}, {"x": 200.0, "y": 0.0}, {"x": 200.0, "y": 150.0}, {"x": 0.0, "y": 150.0}]
+
+
+def png_bytes() -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (200, 150), (250, 250, 250)).save(buffer, format="PNG")
+    return buffer.getvalue()
+
 
 GOOD_PASSWORD = "correct horse battery"
 
@@ -417,3 +435,60 @@ class FailureVocabularyTests(TestCase):
         # A typo that shipped would render as generic copy and hide the real cause.
         with self.assertRaises(ValueError):
             failures.failure("not-a-real-reason")
+
+
+class AccountDeletionTests(TestCase):
+    """DELETE /auth/account/: Google Play requires that an app offering account creation
+    also let a user erase it from inside the app (see README, "Despliegue").
+    """
+
+    def setUp(self) -> None:
+        self.client = APIClient()
+        self.user = User.objects.create_user(
+            email="a@example.com", password=GOOD_PASSWORD, role="professional", is_verified=True
+        )
+        self.token = Token.objects.create(user=self.user).key
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {self.token}")
+
+    def test_deleting_the_account_removes_the_user(self) -> None:
+        response = self.client.delete("/auth/account/")
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(User.objects.filter(pk=self.user.pk).exists())
+
+    def test_the_token_stops_working_afterwards(self) -> None:
+        self.client.delete("/auth/account/")
+
+        self.assertEqual(self.client.get("/auth/session/").status_code, 401)
+
+    def test_an_anonymous_caller_is_refused(self) -> None:
+        self.client.credentials()
+
+        self.assertEqual(self.client.delete("/auth/account/").status_code, 401)
+
+    def test_deleting_the_account_takes_its_studies_and_files_with_it(self) -> None:
+        # Study.owner cascades from User, and studies/signals.py is what actually removes
+        # the image from disk -- the same cleanup one study's own deletion gets.
+        study = Study.objects.create(
+            owner=self.user,
+            anonymous_id="ECG-1",
+            captured_at=timezone.now(),
+            quad=SQUARE_QUAD,
+            image=SimpleUploadedFile("ecg.png", png_bytes(), "image/png"),
+            image_width=200,
+            image_height=150,
+        )
+        image_path = Path(study.image.path)
+        self.assertTrue(image_path.exists())
+
+        self.client.delete("/auth/account/")
+
+        self.assertFalse(Study.objects.filter(pk=study.pk).exists())
+        self.assertFalse(image_path.exists())
+
+    def test_a_failure_answers_a_cause_the_app_knows_and_keeps_the_account(self) -> None:
+        with patch.object(User, "delete", side_effect=RuntimeError("boom")):
+            response = self.client.delete("/auth/account/")
+
+        self.assertEqual(response.json()["reason"], failures.UNEXPECTED)
+        self.assertTrue(User.objects.filter(pk=self.user.pk).exists())

@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
@@ -39,11 +41,22 @@ def _flag(name: str, default: bool = False) -> bool:
     return os.environ.get(name, "1" if default else "0").lower() in ("1", "true", "yes", "on")
 
 
-DEBUG = _flag("DEBUG", default=True)
+# False by default: a server started without deciding is a server that is not accidentally
+# handing out tracebacks. The local workflow this repository is cloned for sets DEBUG=1 in
+# its own .env (see .env.example), so nothing changes for it.
+DEBUG = _flag("DEBUG", default=False)
 
-# The dev fallback is deliberately an obvious placeholder rather than a plausible-looking
-# random string: a key that looks generated is a key someone ships.
-SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-insecure-key-change-me")
+if DEBUG:
+    # The dev fallback is deliberately an obvious placeholder rather than a plausible-looking
+    # random string: a key that looks generated is a key someone ships.
+    SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-insecure-key-change-me")
+else:
+    # Outside DEBUG there is no fallback at all. A production server that boots on a
+    # missing key is a server signing sessions and tokens with whatever the placeholder
+    # above happens to be, which is public because this file is.
+    SECRET_KEY = os.environ.get("SECRET_KEY")
+    if not SECRET_KEY:
+        raise ImproperlyConfigured("SECRET_KEY is required outside DEBUG. Set it in the environment.")
 
 # A phone on the LAN reaches this server at whatever address the router handed the laptop
 # today, and Expo's own tunnel adds another. Enumerating those in DEBUG means editing a
@@ -51,6 +64,13 @@ SECRET_KEY = os.environ.get("SECRET_KEY", "dev-only-insecure-key-change-me")
 # is honoured strictly and an empty one refuses every request, which is the safe way to
 # fail when someone deploys without configuring it.
 ALLOWED_HOSTS = ["*"] if DEBUG else [h.strip() for h in os.environ.get("ALLOWED_HOSTS", "").split(",") if h.strip()]
+
+# The admin's login form and every other session-cookie POST carry CSRF, checked against
+# the Origin/Referer of the request. Caddy terminates TLS in front of this service (see
+# docker-compose.yml), so the domain the browser actually used has to be listed here or its
+# own admin login refuses itself. Empty by default, like ALLOWED_HOSTS: DEBUG never needs
+# it because nothing behind runserver serves the admin over HTTPS to a browser that checks.
+CSRF_TRUSTED_ORIGINS = [o.strip() for o in os.environ.get("CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
 
 INSTALLED_APPS = [
     # Before django.contrib.admin, and the order is load-bearing rather than tidy:
@@ -103,12 +123,29 @@ TEMPLATES = [
     },
 ]
 
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+# SQLite is the development default -- one file, nothing to run alongside runserver. The
+# piloto's Postgres is a separate opt-in rather than the default so that cloning this repo
+# and running it locally needs no database server: set DATABASE_ENGINE=postgresql and the
+# POSTGRES_* variables below to point it at one (see docker-compose.yml, service `db`).
+# Analysis.claim_next's compare-and-swap already works the same way against both engines.
+if os.environ.get("DATABASE_ENGINE") == "postgresql":
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": os.environ.get("POSTGRES_DB", "ekg"),
+            "USER": os.environ.get("POSTGRES_USER", "ekg"),
+            "PASSWORD": os.environ.get("POSTGRES_PASSWORD", ""),
+            "HOST": os.environ.get("POSTGRES_HOST", "db"),
+            "PORT": os.environ.get("POSTGRES_PORT", "5432"),
+        }
     }
-}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": BASE_DIR / "db.sqlite3",
+        }
+    }
 
 AUTH_USER_MODEL = "accounts.User"
 
@@ -159,15 +196,39 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "static/"
+# Only unfold's own assets land here (collectstatic, run once at container start -- see
+# docker/entrypoint-api.sh); nothing in this project ships its own static files. Configurable
+# because the piloto's Caddy serves this directory straight off a volume rather than through
+# Django, and the volume has to be mounted at whatever path this setting names.
+STATIC_ROOT = Path(os.environ.get("STATIC_ROOT", BASE_DIR / "staticfiles"))
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 MEDIA_URL = "media/"
-MEDIA_ROOT = BASE_DIR / "media"
+# Configurable for the same reason WORK_ROOT below is: the piloto mounts this as a Docker
+# volume so the original images survive a container being recreated.
+MEDIA_ROOT = Path(os.environ.get("MEDIA_ROOT", BASE_DIR / "media"))
 
 # Where the pipeline writes its CSVs and interpretation JSON, one directory per study.
 # Separate from MEDIA_ROOT because these are derived artifacts: deleting the whole tree
 # costs a re-run, while deleting MEDIA_ROOT loses the only copy of the original image.
 WORK_ROOT = Path(os.environ.get("ECG_WORK_ROOT", BASE_DIR / "work"))
+
+# --- Running behind Caddy ----------------------------------------------------------
+#
+# TLS terminates at Caddy (docker-compose.yml); this service only ever sees plain HTTP on
+# the Docker network between them. Without SECURE_PROXY_SSL_HEADER, Django believes every
+# request is insecure and request.is_secure() -- which the cookie flags below and the admin
+# both read -- is wrong for all of them. Caddy sets X-Forwarded-Proto itself and this
+# service is never reachable except through it (see Caddyfile), so the header cannot be
+# forged by anything outside the compose network.
+if not DEBUG:
+    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    # HSTS opt-in rather than always-on: it is a promise a domain has to be able to keep
+    # (every future deploy on it must serve HTTPS), and the piloto's domain is not settled
+    # until week 1 (see the deployment report). 0 -- the header is omitted -- until then.
+    SECURE_HSTS_SECONDS = int(os.environ.get("SECURE_HSTS_SECONDS", "0"))
 
 # A photo of an ECG from a modern phone is 4-15 MB, and the app deliberately sends the
 # native-resolution crop rather than a resampled one, because resampling is where a
@@ -189,6 +250,20 @@ STUDY_MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("STUDY_MAX_UPLOAD_SIZE_BYTES", 
 # warning threshold (~89 MP) and that error threshold. This is the limit that is actually
 # checked, and checked first, so it is the one that speaks.
 STUDY_MAX_UPLOAD_PIXELS = int(os.environ.get("STUDY_MAX_UPLOAD_PIXELS", str(50_000_000)))
+
+# DRF's per-IP throttling (accounts/throttling.py) keeps its request history in this cache.
+# LocMemCache is per-process, which is exactly right for runserver and for the test suite,
+# but gunicorn with more than one worker (docker-compose.yml) would then enforce each rate
+# against only whatever share of traffic that one process happened to see. DatabaseCache
+# needs no extra service to run -- only `manage.py createcachetable` once, for the table
+# CACHE_LOCATION names (docker/entrypoint-api.sh does this on every start; it is a no-op
+# once the table exists).
+CACHES = {
+    "default": {
+        "BACKEND": os.environ.get("CACHE_BACKEND", "django.core.cache.backends.locmem.LocMemCache"),
+        "LOCATION": os.environ.get("CACHE_LOCATION", "django_cache"),
+    }
+}
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.TokenAuthentication"],
@@ -212,9 +287,16 @@ REST_FRAMEWORK = {
 }
 
 # Verification codes go to the console in development. Wiring real SMTP is a deployment
-# decision, not a code change: set EMAIL_BACKEND and the EMAIL_HOST_* variables.
+# decision, not a code change: set EMAIL_BACKEND and the EMAIL_HOST_* variables. Written
+# for Resend (see .env.example), but any SMTP provider that speaks TLS on 587 works the
+# same way -- Brevo is the plan B the deployment report names if Resend's mail is rejected.
 EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "no-reply@ekg.local")
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
+EMAIL_USE_TLS = _flag("EMAIL_USE_TLS", default=True)
 
 # React Native on a device sends no Origin header and is unaffected by any of this; the
 # `expo start --web` target runs in a browser and is not. Allowing every origin is
@@ -261,3 +343,32 @@ ECG_WORKER_POLL_SECONDS = float(os.environ.get("ECG_WORKER_POLL_SECONDS", "2.0")
 # default: a ready analysis carries all it serves in its own row, and the files are about
 # 9 MB per study. Failed runs keep theirs regardless, for inspection.
 ECG_KEEP_WORK = _flag("ECG_KEEP_WORK")
+
+# --- Logging -------------------------------------------------------------------------
+#
+# To stdout, always: a container has no log file to rotate, and `docker compose logs` (or
+# whatever the server's log collector reads) is stdout. INFO is what run_worker and the
+# views already log at (a study's outcome, a rejected upload); nothing here logs a request
+# body, which is where a health datum -- or a password -- would otherwise end up.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": os.environ.get("DJANGO_LOG_LEVEL", "INFO"),
+    },
+    "loggers": {
+        # Django's own request log already includes the method, path and status line;
+        # nothing here duplicates it or adds the body.
+        "django": {
+            "handlers": ["console"],
+            "level": os.environ.get("DJANGO_LOG_LEVEL", "INFO"),
+            "propagate": False,
+        },
+    },
+}
