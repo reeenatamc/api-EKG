@@ -52,3 +52,15 @@ numpy>=1.26,<2
 # What is left is an environment that imports fine until something reaches the part of
 # scipy that needs the newer numpy.
 scipy>=1.12,<1.16
+
+# --- Production only, harmless in development --------------------------------------
+# Neither is imported by runserver or by the test suite; both are pure additions for
+# docker-compose.yml's `api` service (see README, "Despliegue").
+
+# The application server the Dockerfile runs instead of runserver.
+gunicorn>=22.0
+
+# The Postgres driver DATABASES needs once DATABASE_ENGINE=postgresql (config/settings.py).
+# [binary] bundles libpq rather than compiling against the system one, which is what makes
+# this installable in the same requirements.txt as everything else, no extra apt package.
+psycopg[binary]>=3.1

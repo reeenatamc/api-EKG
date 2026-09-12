@@ -119,6 +119,7 @@ the adapter reads as a transcription.
 | `requestPasswordReset` | `POST /auth/password-reset/` | `{email, expiresInSeconds}` |
 | `signOut` | `POST /auth/sign-out/` | `204` |
 | n/a | `GET /auth/session/` | `{session:{...}}` |
+| n/a | `DELETE /auth/account/` | `204` |
 
 `GET /auth/session/` has no counterpart in the contract: `restoreSession` reads the app's
 own secure storage. It is there so the adapter can discover that a stored session is dead
@@ -127,6 +128,22 @@ own secure storage. It is there so the adapter can discover that a stored sessio
 The token travels beside `session` rather than inside it because `Session` has no field for
 one. The app models what its screens need, and no screen needs a credential; storing it is
 the adapter's job. Send it back as `Authorization: Token <key>`.
+
+`DELETE /auth/account/` has no counterpart in the contract either, and needs one added to
+the app: Google Play requires that an app offering in-app account creation also let a user
+erase it from inside the app. `Authorization: Token <key>` is the only thing this needs --
+no body, no confirmation beyond the token itself, the same proof `signOut` already trusts.
+It deletes the account and, cascading from it, every one of the user's studies and analyses,
+removing their image and work files from disk on the way out (`studies/signals.py`). A
+failure answers the same shape as every other refusal here, `{"reason": "unexpected"}`, and
+leaves the account untouched.
+
+### Health check
+
+`GET /healthz/`, no credential, no throttle. `{"status": "ok"}` (200) when the database
+answers, `{"status": "error"}` (503) when it does not. Nothing else in the app's contract
+calls it; it exists for Docker's own healthcheck (`docker-compose.yml`) and a free external
+uptime monitor (see "Despliegue").
 
 ### `UploadService`
 
@@ -307,12 +324,13 @@ degraded unconditionally there.
 ## Tests
 
 ```bash
-$VENV manage.py test           # 145 tests, ~2s
+$VENV manage.py test           # 160 tests, ~2s
 ```
 
 They cover the failure vocabularies, quad validation, the homography's direction, the
 calibration arithmetic and its gap handling, the queue's compare-and-swap, the mount
-cross-check, and the throttling and upload-size limits above. What they do not cover is a
+cross-check, the throttling and upload-size limits above, the health check, and that
+deleting a study or an account takes its files with it. What they do not cover is a
 real image through the digitizer and ECGFounder: that needs both sets of weights and tens
 of seconds per case, which makes it an integration test. `PipelineRunner._interpret` is
 patched where the merge logic is exercised.
@@ -325,3 +343,129 @@ run takes. Tests that exercise throttling itself turn a rate back on with
 `override_settings`. The same runner also points MEDIA_ROOT and WORK_ROOT at a fresh
 temporary directory for the run, so a test never writes under this checkout's `media/` or
 `work/`.
+
+---
+
+## Despliegue
+
+Un solo servidor Linux, Docker Compose, cuatro contenedores: `caddy` (HTTPS automático),
+`api` (gunicorn), `worker` (réplicas del pipeline) y `db` (Postgres 16). `Dockerfile` en la
+raíz construye una única imagen para `api` y `worker`; `docker-compose.yml`, `Caddyfile` y
+`.env.example` están junto a él. Pensado para el piloto de un mes descrito en el informe de
+despliegue: una VM de 8 vCPU y 16 GB (UTPL o Hetzner CX43) sostiene dos workers.
+
+### En el servidor (Ubuntu 24.04 o similar)
+
+1. Docker Engine y el plugin Compose (`docker compose version` debe dar 2.20 o más nuevo,
+   para que `deploy.replicas` y `deploy.resources.limits` de `docker-compose.yml` se
+   apliquen fuera de un Swarm).
+2. DNS: el dominio o subdominio del piloto apuntando a la IP del servidor, y los puertos
+   80 y 443 abiertos en el firewall (Caddy los necesita para el reto HTTP-01 de Let's
+   Encrypt).
+3. Clonar el repositorio y pararse en la rama que se vaya a desplegar:
+
+   ```bash
+   git clone <url-del-repo> api-EKG && cd api-EKG
+   ```
+
+4. Configurar el entorno:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Editar `.env`: `SECRET_KEY` (generarla con el comando que el propio archivo indica),
+   `DEBUG=0` (o dejarlo sin definir, que es lo mismo), `ALLOWED_HOSTS` y
+   `CSRF_TRUSTED_ORIGINS` con el dominio, `DATABASE_ENGINE=postgresql` y las `POSTGRES_*`,
+   `DOMAIN` (lo usan Caddy y Django), `ECGFOUNDER_WEIGHTS_DIR=/data/weights`, las
+   `EMAIL_*` de Resend (o el proveedor SMTP que se use), y `WORKER_REPLICAS` /
+   `WORKER_MEMORY_LIMIT` / `OMP_NUM_THREADS` según los vCPU de la máquina (ver los
+   comentarios de cada variable en `.env.example`, que son la referencia completa).
+
+5. Construir y levantar:
+
+   ```bash
+   docker compose build
+   docker compose up -d
+   ```
+
+   El primer arranque tarda: `worker` descarga los pesos de ECGFounder (~700 MB) al
+   volumen `weights_data` con el script de `ecg-pipeline` (`docker/entrypoint-worker.sh`),
+   y `api` corre `migrate` y `collectstatic` antes de servir (`docker/entrypoint-api.sh`).
+   Seguir el progreso con `docker compose logs -f worker api`.
+
+6. Crear la superusuaria del admin, una sola vez:
+
+   ```bash
+   docker compose exec api python manage.py createsuperuser
+   ```
+
+7. Verificar:
+
+   ```bash
+   curl -f https://$DOMINIO/healthz/          # {"status": "ok"}
+   docker compose ps                          # todo "healthy" o "running"
+   ```
+
+   Un monitor externo gratuito (UptimeRobot o similar) sobre `GET /healthz/` avisa si el
+   servicio o la base de datos caen; el endpoint no pide credencial ni cuenta contra
+   ningún límite de peticiones (ver "Health check" arriba).
+
+### Actualizar una versión desplegada
+
+```bash
+git pull
+docker compose build
+docker compose up -d --no-deps api worker
+```
+
+`api` corre sus migraciones al arrancar; `worker` termina el estudio que tenga en curso
+antes de detenerse (`stop_grace_period: 3m` en `docker-compose.yml`, y ver el docstring de
+`run_worker` sobre por qué SIGTERM no lo interrumpe a mitad de análisis).
+
+### Copias de seguridad
+
+```bash
+./scripts/backup.sh /ruta/fuera/del/disco/de/la/vm     # pg_dump + tar de media/
+```
+
+Guarda un volcado de Postgres comprimido y un `tar` de `media/` (las imágenes originales;
+`work/` son intermedios, prescindibles). El resultado sale sin cifrar: cifrarlo con `age`
+o `restic` antes de sacarlo de la máquina es responsabilidad de quien lo programe, porque
+la clave no debe vivir en este repositorio. Una entrada de `cron` diaria más ese cifrado es
+la copia que el informe de despliegue pide.
+
+Restaurar, y **probarlo antes de necesitarlo de verdad** (contra un proyecto Compose
+descartable, no el que está en producción):
+
+```bash
+./scripts/restore.sh db-STAMP.sql.gz media-STAMP.tar.gz
+```
+
+Para de un momento `api` y `worker`, restaura Postgres y `media/`, y los vuelve a arrancar.
+Ver los comentarios del propio script para el detalle.
+
+### Notas y cosas a decidir en el servidor real
+
+- **`WORKER_REPLICAS=2` por defecto, pero `--reclaim-stale` corre en cada réplica al
+  arrancar** (`docker/entrypoint-worker.sh`): requeue de estudios atascados en
+  `processing` hace más de 30 minutos (`DEFAULT_STALE_MINUTES` en
+  `analysis/management/commands/run_worker.py`). Con un análisis de 60 a 130 s medido en
+  el informe de despliegue, 30 minutos da margen amplio; solo sería un problema si una
+  réplica reinicia mientras otra lleva un estudio real anormalmente lento. Bajar a
+  `WORKER_REPLICAS=1` si se prefiere eliminar el riesgo por completo, al costo de la
+  concurrencia.
+- **HSTS queda apagado (`SECURE_HSTS_SECONDS=0`)** hasta que el dominio definitivo esté
+  decidido: es una promesa que hay que poder mantener en todos los despliegues futuros de
+  ese dominio. Subirlo una vez esté firme (ver el comentario en `.env.example`).
+- **El admin no está restringido por IP** en el `Caddyfile` de este repositorio; hay un
+  bloque comentado para hacerlo. Decidirlo con la IP real de quien investiga, o poner
+  Cloudflare Access delante.
+- **Los pesos del digitalizador de 12 derivaciones** (`12_lead_ECGFounder.pth`) se
+  descargan igual que el de 1 derivación porque `download_weights.sh` (en `ecg-pipeline`)
+  todavía no permite bajar solo uno; con `ECG_PATHWAY=rhythm` (el valor por defecto) no se
+  usa, y no hace daño dejarlo en el volumen.
+- **Nada de esto se probó levantando contenedores de verdad** (ver informe de despliegue):
+  se validó `docker compose config` (sin variables faltantes) y `docker buildx build
+  --check` (linter del Dockerfile, sin construir la imagen). La primera corrida real, con
+  la imagen construida y los pesos descargados, hay que hacerla en el servidor.

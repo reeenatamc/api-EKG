@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
 from typing import Any
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
@@ -246,3 +248,84 @@ class UploadFailureVocabularyTests(TestCase):
     def test_an_invented_reason_raises(self) -> None:
         with self.assertRaises(ValueError):
             failures.failure("disk-full")
+
+
+class StudyDeletionTests(TestCase):
+    """Deleting a study must take its files with it.
+
+    ``on_delete=CASCADE`` on ``Study.owner`` and ``Analysis.study`` only ever deletes rows.
+    Left alone, the original image and whatever the worker wrote under WORK_ROOT would sit
+    on disk forever, owned by nothing -- for a health datum that is a leak, not an
+    oversight. ``studies/signals.py`` is what actually removes them.
+    """
+
+    def setUp(self) -> None:
+        self.user = User.objects.create_user(email="a@example.com", password="a password", is_verified=True)
+        self.client = APIClient()
+        self.client.force_authenticate(self.user)
+
+    def upload(self) -> Study:
+        payload = {
+            "image": SimpleUploadedFile("ecg.png", png_bytes(), "image/png"),
+            "imageWidth": IMAGE_WIDTH,
+            "imageHeight": IMAGE_HEIGHT,
+            "metadata": json.dumps(metadata()),
+        }
+        response = self.client.post("/studies/", payload, format="multipart")
+        return Study.objects.get(pk=response.json()["remoteId"])
+
+    def test_the_image_file_exists_after_an_upload(self) -> None:
+        # The premise every test below needs: if nothing were ever written, deleting the
+        # study would trivially "clean up" nothing.
+        study = self.upload()
+
+        self.assertTrue(Path(study.image.path).is_file())
+
+    def test_deleting_the_study_removes_its_image_from_disk(self) -> None:
+        study = self.upload()
+        image_path = Path(study.image.path)
+
+        study.delete()
+
+        self.assertFalse(image_path.exists())
+        self.assertFalse(image_path.parent.exists())
+
+    def test_deleting_the_study_removes_its_work_directory(self) -> None:
+        study = self.upload()
+        workdir = Path(settings.WORK_ROOT) / str(study.id)
+        workdir.mkdir(parents=True)
+        (workdir / "output" / f"{study.id}_timeseries_canonical.csv").parent.mkdir()
+        (workdir / "output" / f"{study.id}_timeseries_canonical.csv").write_text("left by a run that never finished")
+
+        study.delete()
+
+        self.assertFalse(workdir.exists())
+
+    def test_deleting_a_study_with_no_work_directory_does_not_raise(self) -> None:
+        # A study whose analysis finished and already cleaned its own workdir
+        # (PipelineRunner.clean_workdir), or one whose analysis was never requested at all.
+        study = self.upload()
+
+        study.delete()  # must not raise
+
+    def test_deleting_the_owner_removes_the_studys_files_too(self) -> None:
+        # The cascade from User down to Study goes through QuerySet-level deletion inside
+        # Django's collector, not Study.delete() -- exactly the path a signal, and not an
+        # override of delete(), is needed to catch.
+        study = self.upload()
+        image_path = Path(study.image.path)
+
+        self.user.delete()
+
+        self.assertFalse(image_path.exists())
+
+    def test_deleting_the_study_through_a_queryset_still_removes_files(self) -> None:
+        # The admin's bulk delete action and any other Study.objects.filter(...).delete()
+        # call this same path; only a per-instance .delete() would be a narrower guarantee
+        # than what this project actually needs.
+        study = self.upload()
+        image_path = Path(study.image.path)
+
+        Study.objects.filter(pk=study.pk).delete()
+
+        self.assertFalse(image_path.exists())

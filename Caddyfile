@@ -1,0 +1,39 @@
+# Caddy terminates TLS (automatic, via Let's Encrypt) and is the only container with a
+# published port. See README, "Despliegue", for the DNS and firewall steps this assumes,
+# and config/settings.py for SECURE_PROXY_SSL_HEADER / CSRF_TRUSTED_ORIGINS on the Django
+# side of this same boundary.
+
+{$DOMAIN} {
+	encode gzip
+
+	# Phone photos are 4-15 MB; Django's own limits (STUDY_MAX_UPLOAD_SIZE_BYTES,
+	# DATA_UPLOAD_MAX_MEMORY_SIZE) already cap the study upload itself, this is a second,
+	# blunter ceiling on every request body Caddy will forward at all.
+	request_body {
+		max_size 30MB
+	}
+
+	# unfold's admin assets, collected by docker/entrypoint-api.sh into the static_data
+	# volume. Served by Caddy rather than gunicorn so a slow admin page load never ties up
+	# a worker process meant for API requests.
+	handle_path /static/* {
+		root * /srv/static
+		file_server
+	}
+
+	# Uncomment to restrict the admin to a known set of addresses -- the deployment
+	# report's recommendation, since it is the one place here that can read or touch
+	# anything. Replace with the researcher's actual IP(s), or front it with Cloudflare
+	# Access instead.
+	# handle /admin/* {
+	# 	@blocked not remote_ip 203.0.113.10
+	# 	respond @blocked 403
+	# 	reverse_proxy api:8000
+	# }
+
+	handle {
+		reverse_proxy api:8000 {
+			header_up X-Forwarded-Proto {scheme}
+		}
+	}
+}

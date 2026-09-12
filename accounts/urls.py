@@ -17,4 +17,5 @@ urlpatterns = [
     path("password-reset/", views.request_password_reset, name="password-reset"),
     path("sign-out/", views.sign_out, name="sign-out"),
     path("session/", views.current_session, name="current-session"),
+    path("account/", views.delete_account, name="delete-account"),
 ]

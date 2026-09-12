@@ -1,0 +1,117 @@
+# Piloto deployment: one VM, four services, two named volumes for data that must survive
+# a container being recreated. See README, "Despliegue", for the exact steps on the server
+# and .env.example for every variable read here and by the containers themselves.
+#
+# `deploy.replicas` and `deploy.resources.limits` below are honoured by plain `docker
+# compose up` (no Swarm needed) since Compose V2; confirm with `docker compose version`
+# (2.20 or newer) on whatever the server ships. If it is older, replace `deploy:` on the
+# `worker` service with a `mem_limit:` line and run one `docker compose up --scale
+# worker=N` instead -- see the comment on that service below.
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN in .env before starting Caddy}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+      - static_data:/srv/static:ro
+    depends_on:
+      - api
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: api-ekg:latest
+    restart: unless-stopped
+    command: ["/app/docker/entrypoint-api.sh"]
+    env_file: .env
+    environment:
+      DATABASE_ENGINE: postgresql
+      POSTGRES_HOST: db
+      MEDIA_ROOT: /data/media
+      STATIC_ROOT: /data/staticfiles
+      ECG_WORK_ROOT: /data/work
+    volumes:
+      - media_data:/data/media
+      - static_data:/data/staticfiles
+      - work_data:/data/work
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz/', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: api-ekg:latest
+    restart: unless-stopped
+    command: ["/app/docker/entrypoint-worker.sh"]
+    env_file: .env
+    environment:
+      DATABASE_ENGINE: postgresql
+      POSTGRES_HOST: db
+      MEDIA_ROOT: /data/media
+      ECG_WORK_ROOT: /data/work
+      ECGFOUNDER_WEIGHTS_DIR: /data/weights
+    volumes:
+      - media_data:/data/media
+      - work_data:/data/work
+      - weights_data:/data/weights
+    depends_on:
+      db:
+        condition: service_healthy
+    # run_worker finishes the study in hand on SIGTERM (see that command's docstring)
+    # rather than abandoning it mid-run; Docker's own default of 10 s would kill it before
+    # a slow analysis (up to ~130 s measured on 4 vCPU) can finish, losing the CPU already
+    # spent and leaving the row for --reclaim-stale to pick up 30 minutes later instead.
+    stop_grace_period: 3m
+    deploy:
+      # Two by default: the deployment report's measured peak is ~5.1 GB per worker, so two
+      # fit an 8 vCPU/16 GB machine alongside Postgres, Caddy and the API. Do not raise this
+      # without raising the machine, and do not run more than one on an 8 GB box.
+      replicas: ${WORKER_REPLICAS:-2}
+      resources:
+        limits:
+          memory: ${WORKER_MEMORY_LIMIT:-6g}
+      restart_policy:
+        condition: any
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ekg}
+      POSTGRES_USER: ${POSTGRES_USER:-ekg}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # No ports published: nothing outside this compose network ever needs to reach
+    # Postgres directly (see the deployment report's access checklist).
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ekg} -d ${POSTGRES_DB:-ekg}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
+  media_data:
+  work_data:
+  weights_data:
+  static_data:
+  caddy_data:
+  caddy_config:
