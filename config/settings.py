@@ -251,13 +251,14 @@ STUDY_MAX_UPLOAD_SIZE_BYTES = int(os.environ.get("STUDY_MAX_UPLOAD_SIZE_BYTES", 
 # checked, and checked first, so it is the one that speaks.
 STUDY_MAX_UPLOAD_PIXELS = int(os.environ.get("STUDY_MAX_UPLOAD_PIXELS", str(50_000_000)))
 
-# DRF's per-IP throttling (accounts/throttling.py) keeps its request history in this cache.
+# DRF's throttling (accounts/throttling.py) keeps its request history in this cache.
 # LocMemCache is per-process, which is exactly right for runserver and for the test suite,
 # but gunicorn with more than one worker (docker-compose.yml) would then enforce each rate
 # against only whatever share of traffic that one process happened to see. DatabaseCache
 # needs no extra service to run -- only `manage.py createcachetable` once, for the table
 # CACHE_LOCATION names (docker/entrypoint-api.sh does this on every start; it is a no-op
-# once the table exists).
+# once the table exists). docker-compose.yml sets CACHE_BACKEND to DatabaseCache for the
+# api service so the piloto's two gunicorn workers share one throttle history.
 CACHES = {
     "default": {
         "BACKEND": os.environ.get("CACHE_BACKEND", "django.core.cache.backends.locmem.LocMemCache"),
@@ -272,17 +273,25 @@ REST_FRAMEWORK = {
     # Throttled renders as {"detail": "..."} by default, which is exactly the free text
     # the causes-not-messages contract forbids. See accounts/exceptions.py.
     "EXCEPTION_HANDLER": "accounts.exceptions.custom_exception_handler",
-    # Only accounts/throttling.py's two scopes are used, applied per-view with
-    # @throttle_classes on the four unauthenticated auth endpoints -- nothing else here
-    # takes unauthenticated traffic worth limiting. Rates are overridable per deployment;
-    # 'auth' (sign_in, verify_code) tolerates more traffic than 'auth-email' (register,
-    # request_password_reset), which each send an email. DRF keeps throttle history in
-    # the default cache: LocMemCache is fine for one process, but a multi-process
-    # deployment needs CACHES pointed at something shared (Redis, Memcached) or each
-    # process only ever sees its own share of the traffic.
+    # accounts/throttling.py's three scopes, applied per-view with @throttle_classes on the
+    # four unauthenticated auth endpoints -- nothing else here takes unauthenticated traffic
+    # worth limiting. Rates are overridable per deployment.
+    #
+    # 'auth' (sign_in, verify_code) and 'auth-email' (register, request_password_reset) are
+    # keyed on the email in the request body, not the caller's IP -- a classroom piloto puts
+    # every student behind one university wifi's single public address, and an IP-keyed limit
+    # would throttle the tenth student's own first attempt rather than actual abuse of one
+    # account. 'auth-email' is tighter than 'auth' because each accepted request there sends
+    # an email.
+    #
+    # 'auth-ip' is the IP-keyed backstop shared by all four endpoints: much higher than either
+    # per-email rate, it exists to cap one address hammering many different email addresses
+    # (which the per-email limit alone would not catch, since each address gets its own
+    # budget) rather than to react to normal classroom traffic.
     "DEFAULT_THROTTLE_RATES": {
         "auth": os.environ.get("AUTH_THROTTLE_RATE", "10/min"),
         "auth-email": os.environ.get("AUTH_EMAIL_THROTTLE_RATE", "5/min"),
+        "auth-ip": os.environ.get("AUTH_IP_THROTTLE_RATE", "100/min"),
     },
 }
 
