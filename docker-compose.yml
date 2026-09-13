@@ -74,6 +74,8 @@ services:
       MEDIA_ROOT: /data/media
       ECG_WORK_ROOT: /data/work
       ECGFOUNDER_WEIGHTS_DIR: /data/weights
+      # Nothing reads the digitizer's debug PNG and it costs about 6 s per study.
+      ECG_DIGITIZER_DEBUG_PNG: "0"
     volumes:
       - media_data:/data/media
       - work_data:/data/work

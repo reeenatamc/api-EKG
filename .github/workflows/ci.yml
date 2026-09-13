@@ -72,7 +72,7 @@ jobs:
         # Pinned to a tag rather than main: a push to the pipeline must not be able
         # to break this build without a commit here saying which version it moved to.
         # Bump the tag here and in the README together.
-        run: pip install "git+https://github.com/reeenatamc/ecg-pipeline.git@v0.1.4"
+        run: pip install "git+https://github.com/reeenatamc/ecg-pipeline.git@v0.1.5"
 
       - name: Install dependencies
         run: pip install -r requirements.txt
