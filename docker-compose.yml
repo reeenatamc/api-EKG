@@ -39,6 +39,13 @@ services:
       MEDIA_ROOT: /data/media
       STATIC_ROOT: /data/staticfiles
       ECG_WORK_ROOT: /data/work
+      # gunicorn runs more than one worker process here (GUNICORN_WORKERS below); LocMemCache
+      # would give each its own throttle history, so the email- and IP-keyed limits in
+      # accounts/throttling.py would each only ever see one process's share of the traffic.
+      # DatabaseCache is shared across every process without adding a service. See
+      # .env.example and docker/entrypoint-api.sh (which runs createcachetable on every start).
+      CACHE_BACKEND: django.core.cache.backends.db.DatabaseCache
+      CACHE_LOCATION: django_cache
     volumes:
       - media_data:/data/media
       - static_data:/data/staticfiles

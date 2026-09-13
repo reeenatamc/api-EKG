@@ -9,14 +9,17 @@ and check passwords constantly, which took the suite from a few seconds to half 
 A suite that slow stops being run. MD5 here applies to the test database only; the
 production hasher is exercised by Django's own suite.
 
-The second is the auth throttle rates (accounts/throttling.py). Those are a per-IP limit
-meant for the real world, and the suite calls the endpoints they guard from one address --
+The second is the auth throttle rates (accounts/throttling.py). Those are meant for the
+real world, and the suite calls the endpoints they guard -- from one email and one address,
 the test client's -- far more than the production rate allows within the minute a full run
 takes, which would throttle tests that have nothing to do with rate limiting. Turned off by
 default here, the same way DRF itself spells "unlimited" (a rate of None short-circuits
 SimpleRateThrottle.allow_request); tests that exercise throttling turn it back on with
 override_settings, at a rate low enough to reach in a handful of requests -- see
-ThrottlingTests in tests/test_auth.py.
+ThrottlingTests in tests/test_auth.py. All three scopes have to be listed here, including
+the IP-keyed backstop: AuthIPRateThrottle.get_rate() looks up DEFAULT_THROTTLE_RATES["auth-ip"]
+on every request it throttles (accounts/throttling.py, all four auth views), and a plain
+KeyError there is not the same thing as the rate being off.
 
 The third keeps the suite from writing into the repository. A test that creates a Study
 writes a real file under MEDIA_ROOT, and one that runs the pipeline writes a per-study
@@ -48,7 +51,7 @@ class FastPasswordHasherRunner(DiscoverRunner):
 
         settings.REST_FRAMEWORK = {
             **settings.REST_FRAMEWORK,
-            "DEFAULT_THROTTLE_RATES": {"auth": None, "auth-email": None},
+            "DEFAULT_THROTTLE_RATES": {"auth": None, "auth-email": None, "auth-ip": None},
         }
         # A plain assignment does not fire the setting_changed signal that override_settings
         # sends, and DRF's api_settings caches DEFAULT_THROTTLE_RATES the first time anything

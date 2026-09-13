@@ -18,9 +18,18 @@ echo "==> Collecting static files"
 python manage.py collectstatic --noinput
 
 echo "==> Starting gunicorn"
+# gthread rather than the sync default: a sync worker blocks on the whole request,
+# including the time it takes the client to finish sending the body, so one slow upload
+# (a phone on classroom wifi) ties up an entire process for as long as the transfer takes.
+# A thread only holds its own socket read; while it waits on I/O it releases the GIL, so
+# GUNICORN_THREADS lets each of the few worker processes this machine can afford (they
+# share it with two 6 GB analysis workers, see docker-compose.yml) serve several slow
+# uploads at once instead of one. See .env.example and README, "Despliegue".
 exec gunicorn config.wsgi:application \
     --bind 0.0.0.0:8000 \
+    --worker-class "${GUNICORN_WORKER_CLASS:-gthread}" \
     --workers "${GUNICORN_WORKERS:-2}" \
+    --threads "${GUNICORN_THREADS:-4}" \
     --timeout "${GUNICORN_TIMEOUT:-120}" \
     --access-logfile - \
     --error-logfile -

@@ -49,12 +49,18 @@ def png_bytes() -> bytes:
 GOOD_PASSWORD = "correct horse battery"
 
 
-def with_throttle_rate(rate: str) -> dict:
-    """A REST_FRAMEWORK override that carries every other key as-is and replaces only the
-    two auth scopes, so a test does not have to fire off a real minute of traffic to reach
-    the limit it wants to check.
+def with_throttle_rate(rate: str, ip_rate: str = "10000/min") -> dict:
+    """A REST_FRAMEWORK override that carries every other key as-is and replaces the two
+    per-account auth scopes, so a test does not have to fire off a real minute of traffic
+    to reach the limit it wants to check. ``ip_rate`` defaults high enough that the IP
+    backstop (accounts/throttling.py's AuthIPRateThrottle, scope 'auth-ip') never fires by
+    accident in a test aimed at the per-account scopes -- pass it explicitly to test the
+    backstop itself.
     """
-    return {**settings.REST_FRAMEWORK, "DEFAULT_THROTTLE_RATES": {"auth": rate, "auth-email": rate}}
+    return {
+        **settings.REST_FRAMEWORK,
+        "DEFAULT_THROTTLE_RATES": {"auth": rate, "auth-email": rate, "auth-ip": ip_rate},
+    }
 
 
 def code_from_outbox() -> str:
@@ -325,17 +331,18 @@ class SessionTests(TestCase):
 
 class ThrottlingTests(TestCase):
     """sign_in, verify_code, register and request_password_reset take no credential to
-    gate on, so each is throttled by IP (accounts/throttling.py). The rate is overridden
-    down to a handful of requests a minute so a test does not have to fire off sixty
-    seconds of real traffic to reach it.
+    gate on, so each is throttled (accounts/throttling.py): mainly by the email in the
+    request body, plus a much higher IP-keyed backstop shared by all four. The rate is
+    overridden down to a handful of requests a minute so a test does not have to fire off
+    sixty seconds of real traffic to reach it.
     """
 
     def setUp(self) -> None:
         self.client = APIClient()
         User.objects.create_user(email="a@example.com", password=GOOD_PASSWORD, role="professional", is_verified=True)
-        # DRF keeps throttle history in the default cache, keyed by IP. Every test in this
-        # class shares the test client's IP, so a leftover entry from one would make the
-        # next test's very first request already throttled.
+        # DRF keeps throttle history in the default cache. Every test in this class shares
+        # one key (the same email, or the test client's one IP), so a leftover entry from
+        # one test would make the next test's very first request already throttled.
         cache.clear()
 
     def tearDown(self) -> None:
@@ -370,16 +377,20 @@ class ThrottlingTests(TestCase):
 
     @override_settings(REST_FRAMEWORK=with_throttle_rate("2/min"))
     def test_register_is_throttled(self) -> None:
-        for i in range(2):
+        # Keyed on the email in the body (accounts/throttling.py), so all three calls
+        # here have to target the same address to share one budget -- a different address
+        # each time, as a real classroom's ten distinct students would send, must not
+        # collide (see test_ten_accounts_from_the_same_ip_can_sign_in_and_register_in_one_minute).
+        for _ in range(2):
             self.client.post(
                 "/auth/register/",
-                {"email": f"new{i}@example.com", "password": GOOD_PASSWORD, "role": "professional"},
+                {"email": "new@example.com", "password": GOOD_PASSWORD, "role": "professional"},
                 format="json",
             )
 
         response = self.client.post(
             "/auth/register/",
-            {"email": "one-more@example.com", "password": GOOD_PASSWORD, "role": "professional"},
+            {"email": "new@example.com", "password": GOOD_PASSWORD, "role": "professional"},
             format="json",
         )
 
@@ -400,10 +411,11 @@ class ThrottlingTests(TestCase):
         # Both draw from 'auth-email' rather than 'auth': each accepted call here sends an
         # email, which is the resource being protected, and it is a separate budget from
         # sign_in/verify_code so guessing a password cannot exhaust a legitimate
-        # registration's headroom.
+        # registration's headroom. Keyed on the email in the body, so it is the same
+        # target account's budget the two endpoints have to share here.
         self.client.post(
             "/auth/register/",
-            {"email": "x@example.com", "password": GOOD_PASSWORD, "role": "professional"},
+            {"email": "a@example.com", "password": GOOD_PASSWORD, "role": "professional"},
             format="json",
         )
         self.client.post("/auth/password-reset/", {"email": "a@example.com"}, format="json")
@@ -411,6 +423,60 @@ class ThrottlingTests(TestCase):
         response = self.client.post("/auth/password-reset/", {"email": "a@example.com"}, format="json")
 
         self.assertEqual(response.status_code, 429)
+
+    def test_ten_accounts_from_the_same_ip_can_sign_in_and_register_in_one_minute(self) -> None:
+        # The classroom scenario the per-account keying exists for: ten-plus students
+        # behind one wifi's single public address, each spending only their own budget.
+        # No @override_settings here -- this checks the rates the piloto actually ships
+        # with (accounts/throttling.py, config/settings.py), not an inflated test rate.
+        for i in range(10):
+            User.objects.create_user(email=f"student{i}@example.com", password=GOOD_PASSWORD, is_verified=True)
+
+        for i in range(10):
+            response = self.client.post(
+                "/auth/sign-in/", {"email": f"student{i}@example.com", "password": GOOD_PASSWORD}, format="json"
+            )
+            self.assertEqual(response.status_code, 200)
+
+        for i in range(10):
+            response = self.client.post(
+                "/auth/register/",
+                {"email": f"new-student{i}@example.com", "password": GOOD_PASSWORD, "role": "student"},
+                format="json",
+            )
+            self.assertEqual(response.status_code, 200)
+
+    @override_settings(REST_FRAMEWORK=with_throttle_rate("2/min"))
+    def test_throttling_one_account_does_not_spend_anothers_budget(self) -> None:
+        # The per-email key is what makes the classroom case above work: exhausting one
+        # account's budget must not touch a second account sharing the same IP.
+        User.objects.create_user(email="c@example.com", password=GOOD_PASSWORD, is_verified=True)
+        for _ in range(2):
+            self.client.post("/auth/sign-in/", {"email": "a@example.com", "password": "wrong"}, format="json")
+        exhausted = self.client.post("/auth/sign-in/", {"email": "a@example.com", "password": "wrong"}, format="json")
+        self.assertEqual(exhausted.status_code, 429)
+
+        response = self.client.post(
+            "/auth/sign-in/", {"email": "c@example.com", "password": GOOD_PASSWORD}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 200)
+
+    @override_settings(REST_FRAMEWORK=with_throttle_rate("1000/min", ip_rate="3/min"))
+    def test_the_ip_backstop_still_catches_abuse_across_many_accounts(self) -> None:
+        # The per-account budget alone would never catch this: guessing against a fresh
+        # address each time gets a fresh budget every time. AuthIPRateThrottle (scope
+        # 'auth-ip') is the one that still stops it, since it is keyed on the caller's
+        # address rather than the target account.
+        for i in range(3):
+            self.client.post("/auth/sign-in/", {"email": f"unknown{i}@example.com", "password": "wrong"}, format="json")
+
+        response = self.client.post(
+            "/auth/sign-in/", {"email": "yet-another@example.com", "password": "wrong"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.json(), {"reason": failures.UNEXPECTED})
 
 
 class FailureVocabularyTests(TestCase):
