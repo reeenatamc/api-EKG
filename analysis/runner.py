@@ -19,6 +19,7 @@ digitization problems dominate: they invalidate everything downstream.
 
 from __future__ import annotations
 
+import importlib
 import logging
 import shutil
 from pathlib import Path
@@ -36,6 +37,9 @@ from studies.mounts import layout_disagrees_with_mount, lead_layout_for
 logger = logging.getLogger(__name__)
 
 UNKNOWN_LAYOUT = "Unknown layout"
+
+# The first ecg-pipeline release whose ``device`` moves the digitizer too, not only ECGFounder.
+GPU_PIPELINE_VERSION = "0.1.5"
 
 
 class PipelineRunner:
@@ -59,6 +63,27 @@ class PipelineRunner:
         self.work_root = Path(work_root or settings.WORK_ROOT)
         self._model: Any = None
         self._checkpoint: str | None = None
+
+    def check_device(self) -> str:
+        """Fail now, not on the first study, when the configured device cannot be used.
+
+        ``cpu`` is accepted as it always was, without importing torch or asking the pipeline
+        anything. Anything else goes through ``ecg_pipeline.devices.require_device``, which
+        raises with the cause when torch cannot see the GPU. A pipeline too old to have that
+        module would run the digitizer on the CPU and only ECGFounder on the GPU, so it is
+        refused instead of half-honoured.
+        """
+        if self.device.strip().lower() == "cpu":
+            return self.device
+        try:
+            devices = importlib.import_module("ecg_pipeline.devices")
+        except ImportError:
+            raise RuntimeError(
+                f"ECG_DEVICE={self.device} needs ecg-pipeline {GPU_PIPELINE_VERSION} or newer, which runs the "
+                f"digitizer on the GPU as well; this one is {_pipeline_version()}. Use ECG_DEVICE=cpu or upgrade it."
+            ) from None
+        self.device = str(devices.require_device(self.device))
+        return self.device
 
     # -- pipeline stages ------------------------------------------------------------
 
@@ -92,6 +117,8 @@ class PipelineRunner:
             skip_interpretation=True,
             upscale="auto",
             quiet=True,
+            # Moves the digitizer to the same device as ECGFounder (ecg-pipeline 0.1.5 on).
+            device=self.device,
         )
         return results[0] if results else None
 

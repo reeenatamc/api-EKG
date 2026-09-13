@@ -1,0 +1,88 @@
+# Worker image for a machine with an NVIDIA GPU. Only the `worker` role: the API never runs
+# a model, so it keeps using the CPU image built by the root Dockerfile.
+#
+#   docker build -f docker/Dockerfile.worker-gpu -t api-ekg-worker-gpu .
+#
+# Not tied to a platform. It runs `docker/entrypoint-worker.sh` like the CPU worker, reads
+# the same environment (.env.example) and needs the same database and volumes; the host
+# only has to expose a GPU to the container (NVIDIA Container Toolkit on a VM, or a platform
+# that attaches one). docker-compose.gpu.yml is one way to run it next to the rest.
+#
+# Differences from the root Dockerfile, and nothing else:
+# - Base image: CUDA 12.1 on Ubuntu 22.04, matching the cu121 torch wheels below. The
+#   "base" flavour carries no CUDA libraries of its own (the torch wheels bring theirs); it
+#   sets what the container runtime needs to mount the host driver.
+# - Python 3.12 from the deadsnakes PPA, in a virtualenv, because 22.04 ships 3.10 and the
+#   validated stack is 3.12.
+# - torch 2.2.2 / torchvision 0.17.2 from the CUDA 12.1 index instead of the CPU one: the
+#   same versions as the CPU image, so the GPU is the only thing that changes.
+# - ECG_DEVICE=cuda by default, and ecg-pipeline v0.1.5, the first release that moves the
+#   digitizer to the GPU too. The worker refuses to start if it cannot see the GPU.
+#
+# Keep the steps shared with the root Dockerfile (pinned refs, digitizer clone and patches,
+# user) in step with it.
+FROM nvidia/cuda:12.1.1-base-ubuntu22.04
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends software-properties-common gnupg ca-certificates curl git git-lfs \
+    && add-apt-repository -y ppa:deadsnakes/ppa \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends python3.12 python3.12-venv \
+    && git lfs install --skip-repo \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN python3.12 -m venv /opt/venv
+ENV PATH=/opt/venv/bin:$PATH
+
+ARG ECG_PIPELINE_REF=v0.1.5
+ARG DIGITIZER_COMMIT=963387f
+ARG DIGITIZER_HOME=/opt/open-ecg-digitizer
+ARG PIPELINE_SRC=/opt/ecg-pipeline-src
+
+WORKDIR /app
+
+# torchvision==0.17.2 in requirements-inference.txt is satisfied by 0.17.2+cu121, so the
+# second install leaves the CUDA wheels in place.
+COPY docker/requirements-inference.txt ./docker/requirements-inference.txt
+RUN pip install --upgrade pip \
+    && pip install --index-url https://download.pytorch.org/whl/cu121 torch==2.2.2 torchvision==0.17.2 \
+    && pip install -r docker/requirements-inference.txt
+
+COPY requirements.txt ./requirements.txt
+RUN pip install -r requirements.txt
+
+RUN git clone --branch "$ECG_PIPELINE_REF" --depth 1 \
+        https://github.com/reeenatamc/ecg-pipeline.git "$PIPELINE_SRC" \
+    && pip install --no-deps "$PIPELINE_SRC" \
+    && cp "$PIPELINE_SRC/scripts/download_weights.sh" /usr/local/bin/download-ecgfounder-weights \
+    && chmod +x /usr/local/bin/download-ecgfounder-weights
+
+RUN git clone https://github.com/Ahus-AIM/Open-ECG-Digitizer.git "$DIGITIZER_HOME" \
+    && git -C "$DIGITIZER_HOME" checkout "$DIGITIZER_COMMIT" \
+    && git -C "$DIGITIZER_HOME" lfs pull \
+    && for patch in "$PIPELINE_SRC"/patches/*.patch; do \
+         echo "applying $patch"; \
+         git -C "$DIGITIZER_HOME" apply "$patch"; \
+       done \
+    && rm -rf "$PIPELINE_SRC" "$DIGITIZER_HOME/.git"
+
+ENV OPEN_ECG_DIGITIZER_HOME=$DIGITIZER_HOME \
+    ECG_DEVICE=cuda
+
+COPY . .
+COPY docker/entrypoint-worker.sh /app/docker/
+RUN chmod +x /app/docker/entrypoint-worker.sh
+
+RUN useradd --create-home --uid 1000 appuser \
+    && mkdir -p /app/media /app/work \
+    && chown -R appuser:appuser /app "$DIGITIZER_HOME"
+USER appuser
+
+CMD ["/app/docker/entrypoint-worker.sh"]
