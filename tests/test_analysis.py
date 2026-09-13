@@ -42,7 +42,20 @@ User = get_user_model()
 
 # EcgAnalysis in app-EKG's src/ecg/EcgAnalysisService.ts. None of these members is
 # optional, so a missing key lands in the app as undefined where it expects null.
-ECG_ANALYSIS_KEYS = {"studyId", "status", "signal", "measurements", "observations", "failure", "completedAt"}
+# queuePosition is not part of that contract -- it is additive (see Analysis.to_body), so a
+# client built against EcgAnalysis before it existed still reads every key it expects and
+# simply ignores the one it does not recognise -- but to_body always serves it, so it is
+# included here too.
+ECG_ANALYSIS_KEYS = {
+    "studyId",
+    "status",
+    "signal",
+    "measurements",
+    "observations",
+    "failure",
+    "completedAt",
+    "queuePosition",
+}
 
 SQUARE_QUAD = [{"x": 0.0, "y": 0.0}, {"x": 200.0, "y": 0.0}, {"x": 200.0, "y": 150.0}, {"x": 0.0, "y": 150.0}]
 
@@ -104,6 +117,8 @@ class AnalysisEndpointTests(TestCase):
         self.assertIsNone(body["failure"])
         self.assertIsNone(body["completedAt"])
         self.assertEqual(body["observations"], [])
+        # Alone in the queue: nothing is ahead of it.
+        self.assertEqual(body["queuePosition"], 0)
 
     def test_requesting_twice_does_not_start_a_second_run(self) -> None:
         # The app's queue retries. A second request must not duplicate the work, and must
@@ -174,6 +189,8 @@ class AnalysisEndpointTests(TestCase):
         # so a field neither side inspects, like "category", still has to survive the
         # round trip untouched.
         self.assertEqual(body["observations"][0]["category"], "ritmo")
+        # Ready: nothing left to queue.
+        self.assertIsNone(body["queuePosition"])
 
     def test_the_status_is_polled_through_get(self) -> None:
         self.client.post(self.url())
@@ -182,6 +199,25 @@ class AnalysisEndpointTests(TestCase):
 
         self.assertEqual(body["status"], STATUS_QUEUED)
         self.assertEqual(set(body), ECG_ANALYSIS_KEYS)
+
+    def test_queue_position_is_served_through_the_endpoint(self) -> None:
+        # Someone else's study queued first: two ahead of this caller's own once a second
+        # of theirs is queued too, none of it visible except through queuePosition.
+        other = User.objects.create_user(email="b@example.com", password="a password", is_verified=True)
+        earlier_a = self.make_study(other)
+        earlier_a.anonymous_id = "ECG-260806-4K2N"
+        earlier_a.save()
+        earlier_b = self.make_study(other)
+        earlier_b.anonymous_id = "ECG-260806-4K2P"
+        earlier_b.save()
+        self.client.force_authenticate(other)
+        self.client.post(self.url(earlier_a))
+        self.client.post(self.url(earlier_b))
+        self.client.force_authenticate(self.user)
+
+        body = self.client.post(self.url()).json()
+
+        self.assertEqual(body["queuePosition"], 2)
 
     def test_another_users_study_is_not_found_rather_than_forbidden(self) -> None:
         # A 403 would confirm the id exists, and a study id is the only handle anyone has
@@ -259,6 +295,42 @@ class QueueTests(TestCase):
 
     def test_an_empty_queue_claims_nothing(self) -> None:
         self.assertIsNone(Analysis.claim_next())
+
+    def test_queue_position_counts_only_studies_requested_earlier(self) -> None:
+        first = self.make_analysis()
+        second = self.make_analysis()
+        third = self.make_analysis()
+        # requested_at defaults to timezone.now() at creation time, which on a fast test
+        # run can tie between rows depending on the database's clock resolution. Space
+        # them out explicitly so the ordering claim_next and queue_position both rely on
+        # is not left to chance.
+        now = timezone.now()
+        Analysis.objects.filter(pk=first.pk).update(requested_at=now)
+        Analysis.objects.filter(pk=second.pk).update(requested_at=now + timedelta(seconds=1))
+        Analysis.objects.filter(pk=third.pk).update(requested_at=now + timedelta(seconds=2))
+
+        self.assertEqual(Analysis.objects.get(pk=first.pk).queue_position(), 0)
+        self.assertEqual(Analysis.objects.get(pk=second.pk).queue_position(), 1)
+        self.assertEqual(Analysis.objects.get(pk=third.pk).queue_position(), 2)
+
+    def test_queue_position_ignores_a_study_that_is_not_queued(self) -> None:
+        ahead = self.make_analysis()
+        behind = self.make_analysis()
+        now = timezone.now()
+        Analysis.objects.filter(pk=ahead.pk).update(requested_at=now)
+        Analysis.objects.filter(pk=behind.pk).update(requested_at=now + timedelta(seconds=1))
+
+        Analysis.claim_next()  # takes `ahead`, the oldest
+
+        # `ahead` no longer counts towards anyone's position: it is processing, not queued.
+        self.assertEqual(Analysis.objects.get(pk=behind.pk).queue_position(), 0)
+
+    def test_queue_position_is_none_once_processing(self) -> None:
+        analysis = self.make_analysis()
+
+        analysis.mark_processing()
+
+        self.assertIsNone(analysis.queue_position())
 
     def test_stale_processing_rows_are_returned_to_the_queue(self) -> None:
         # A worker killed mid-study leaves a row claimed that nothing would ever pick up.
@@ -348,6 +420,7 @@ class QueueTests(TestCase):
         self.assertEqual(set(analysis.to_body()), ECG_ANALYSIS_KEYS)
         self.assertEqual(analysis.status, STATUS_FAILED)
         self.assertEqual(analysis.to_body()["failure"], FAILURE_SERVER_ERROR)
+        self.assertIsNone(analysis.to_body()["queuePosition"])
 
     def test_the_status_is_taken_from_the_contract_not_decided_twice(self) -> None:
         # ecg_pipeline.contract.to_analysis already decides that a degraded result is

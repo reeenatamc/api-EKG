@@ -104,15 +104,26 @@ class Analysis(models.Model):
         return self.status in (STATUS_READY, STATUS_FAILED)
 
     def to_body(self) -> dict[str, Any]:
-        """The app's ``EcgAnalysis``.
+        """The app's ``EcgAnalysis``, plus ``queuePosition``.
 
         A finished analysis serves the stored payload. An unfinished one is built here,
         and every field it cannot yet answer is null or empty rather than absent: the app's
         type has no optional members, and a missing key would land as ``undefined`` where
         it expects ``null``.
+
+        ``queuePosition`` is not part of that stored contract -- it is added on every call,
+        computed fresh, because it changes as other studies are queued and claimed even
+        while this row sits untouched. It is additive: a client built against the contract
+        before this field existed reads the same keys it always did and simply ignores the
+        one it does not recognise.
         """
         if self.payload is not None:
-            return dict(self.payload)
+            # A stored payload only exists once a run has finished (mark_finished,
+            # mark_failed) -- ready or failed, either way there is no queue position left
+            # to report.
+            body = dict(self.payload)
+            body["queuePosition"] = None
+            return body
         return {
             "studyId": str(self.study_id),
             "status": self.status,
@@ -121,7 +132,20 @@ class Analysis(models.Model):
             "observations": [],
             "failure": self.failure,
             "completedAt": self.completed_at.isoformat() if self.completed_at else None,
+            "queuePosition": self.queue_position(),
         }
+
+    def queue_position(self) -> int | None:
+        """Studies ahead of this one in the FIFO queue ``claim_next`` drains.
+
+        None once this analysis is no longer queued -- processing, ready or failed all have
+        no queue position to report. Cheap by construction: one COUNT against the same
+        (status, requested_at) index ``claim_next`` orders by, no different from a query
+        that endpoint already has to make once per poll.
+        """
+        if self.status != STATUS_QUEUED:
+            return None
+        return type(self).objects.filter(status=STATUS_QUEUED, requested_at__lt=self.requested_at).count()
 
     def requeue(self) -> bool:
         """Put a failed analysis back in the queue, at the user's request.
