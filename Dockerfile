@@ -31,7 +31,7 @@ RUN apt-get update \
 # workflow and this repository's README are kept in step (see .github/workflows/ci.yml):
 # a reading made under a different pipeline version is not one this build's tests vouched
 # for.
-ARG ECG_PIPELINE_REF=v0.1.4
+ARG ECG_PIPELINE_REF=v0.1.5
 ARG DIGITIZER_COMMIT=963387f
 ARG DIGITIZER_HOME=/opt/open-ecg-digitizer
 ARG PIPELINE_SRC=/opt/ecg-pipeline-src
