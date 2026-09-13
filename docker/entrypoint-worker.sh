@@ -18,5 +18,7 @@ download-ecgfounder-weights
 # because docker-compose.yml starts every worker replica the same way -- if this ever runs
 # alongside a worker fleet started some other way, that assumption is what to revisit (see
 # analysis/management/commands/run_worker.py).
-echo "==> Starting worker (OMP_NUM_THREADS=${OMP_NUM_THREADS:-unset, torch default})"
+# ECG_DEVICE=cuda (the GPU image's default) is checked by run_worker before it takes a study:
+# a container that cannot see its GPU exits with the cause instead of failing studies.
+echo "==> Starting worker (ECG_DEVICE=${ECG_DEVICE:-cpu}, OMP_NUM_THREADS=${OMP_NUM_THREADS:-unset, torch default})"
 exec python manage.py run_worker --reclaim-stale

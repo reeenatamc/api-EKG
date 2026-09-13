@@ -381,6 +381,13 @@ continua y le quita buena parte de la ventaja de costo). Migrar a esto tiene sen
 problema real termina siendo de memoria o de cantidad de máquinas simultáneas, no si el
 problema es la latencia del primer análisis del día.
 
+Con GPU, el worker ya está preparado aunque la plataforma no está decidida: la imagen
+`docker/Dockerfile.worker-gpu` y la variable `ECG_DEVICE=cuda` (ver README, "Worker con
+GPU"). En Colab con una T4 un estudio tardó unos 17 s en caliente y 26 s en frío, frente a
+95 s en CPU, con la misma calidad en 24 de 24 imágenes. Eso reduce mucho el arranque en frío
+descrito arriba, pero los precios de GPU en Cloud Run o en una VM no están verificados en
+esta guía.
+
 ## j) Datos de salud: región, transferencia internacional y comité de ética
 
 Tres cosas que no son técnicas pero que condicionan si este despliegue se puede usar con

@@ -324,7 +324,7 @@ degraded unconditionally there.
 ## Tests
 
 ```bash
-$VENV manage.py test           # 160 tests, ~2s
+$VENV manage.py test           # 174 tests, ~3s
 ```
 
 They cover the failure vocabularies, quad validation, the homography's direction, the
@@ -410,6 +410,34 @@ despliegue: una VM de 8 vCPU y 16 GB (UTPL o Hetzner CX43) sostiene dos workers.
    Un monitor externo gratuito (UptimeRobot o similar) sobre `GET /healthz/` avisa si el
    servicio o la base de datos caen; el endpoint no pide credencial ni cuenta contra
    ningún límite de peticiones (ver "Health check" arriba).
+
+### Worker con GPU
+
+Opcional y sin plataforma decidida. `ECG_DEVICE=cuda` hace que el worker corra todo el
+análisis en la GPU: el digitalizador (sus dos redes) y ECGFounder. Requiere ecg-pipeline
+0.1.5 o posterior y un torch con CUDA. Si el worker no ve la GPU, `run_worker` se niega a
+arrancar con la causa, en vez de tomar un estudio y fallarlo.
+
+- `docker/Dockerfile.worker-gpu` construye solo el worker: CUDA 12.1 sobre Ubuntu 22.04,
+  Python 3.12, torch 2.2.2 con CUDA 12.1 (la misma versión que la imagen CPU),
+  ecg-pipeline `v0.1.5` y `ECG_DEVICE=cuda` por defecto. La API sigue usando la imagen CPU.
+
+  ```bash
+  docker build -f docker/Dockerfile.worker-gpu -t api-ekg-worker-gpu .
+  ```
+
+- `docker-compose.gpu.yml` es un override para una sola máquina con GPU propia (driver de
+  NVIDIA y NVIDIA Container Toolkit instalados); una plataforma que asigna la GPU por su
+  cuenta usa la imagen directamente:
+
+  ```bash
+  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+  ```
+
+Medido en Colab con una T4 (notebook `scripts/medir_gpu_colab.ipynb` de ecg-pipeline): unos
+17 s por estudio en caliente y 26 s en frío, frente a 95 s en la CPU de esa máquina, con la
+misma calidad de digitalización en 24 de 24 imágenes. La imagen no se ha construido ni
+probado en una GPU real todavía.
 
 ### Actualizar una versión desplegada
 

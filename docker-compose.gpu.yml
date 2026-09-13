@@ -1,0 +1,26 @@
+# Optional override: run the worker on an NVIDIA GPU, everything else unchanged.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# Needs the NVIDIA driver and the NVIDIA Container Toolkit on the host. Only for a single
+# machine that has its own GPU; a platform that attaches GPUs itself (Cloud Run, a managed
+# job) runs docker/Dockerfile.worker-gpu directly and does not use this file.
+
+services:
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker-gpu
+    image: api-ekg-worker-gpu:latest
+    environment:
+      # Overrides whatever .env says: this image exists to run on the GPU.
+      ECG_DEVICE: cuda
+    deploy:
+      # One by default: one worker per GPU is what was measured. Two on the same card was not.
+      replicas: ${WORKER_REPLICAS:-1}
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

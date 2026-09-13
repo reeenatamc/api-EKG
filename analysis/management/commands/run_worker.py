@@ -66,6 +66,12 @@ class Command(BaseCommand):
             signal.signal(sig, self._stop)
 
         runner = PipelineRunner(pathway=options.get("pathway"))
+        # Before touching the queue: a worker told to use a GPU it cannot see must refuse to
+        # start, not claim a study and fail it as a server error.
+        try:
+            runner.check_device()
+        except (RuntimeError, ValueError) as exc:
+            raise CommandError(str(exc)) from exc
 
         if options["reclaim_stale"]:
             cutoff = timezone.now() - timedelta(minutes=DEFAULT_STALE_MINUTES)
