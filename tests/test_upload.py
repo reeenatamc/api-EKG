@@ -16,13 +16,15 @@ from typing import Any
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import SimpleTestCase, TestCase, override_settings
 from PIL import Image
+from rest_framework.exceptions import ValidationError
 from rest_framework.test import APIClient
 
 from studies import failures
 from studies.models import Study
 from studies.mounts import MOUNT_IDS
+from studies.serializers import _finite
 
 User = get_user_model()
 
@@ -236,6 +238,15 @@ class UploadTests(TestCase):
         response = self.upload()
 
         self.assertEqual(response.status_code, 201)
+
+
+class FiniteCoordinateTests(SimpleTestCase):
+    def test_the_validation_error_hides_the_float_error(self) -> None:
+        with self.assertRaises(ValidationError) as caught:
+            _finite("abc")
+
+        # The ValueError from float() is noise in the traceback of a bad request.
+        self.assertTrue(caught.exception.__suppress_context__)
 
 
 class UploadFailureVocabularyTests(TestCase):

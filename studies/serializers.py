@@ -51,7 +51,7 @@ def _finite(value: Any) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError):
-        raise serializers.ValidationError(f"{value!r} is not a number")
+        raise serializers.ValidationError(f"{value!r} is not a number") from None
     if not math.isfinite(number):
         raise serializers.ValidationError(f"{value!r} is not a finite number")
     return number
@@ -141,7 +141,7 @@ class StudyUploadSerializer(serializers.Serializer):
             try:
                 value = json.loads(value)
             except (ValueError, TypeError):
-                raise serializers.ValidationError("metadata is not valid JSON")
+                raise serializers.ValidationError("metadata is not valid JSON") from None
         if not isinstance(value, dict):
             raise serializers.ValidationError("metadata must be an object")
 
