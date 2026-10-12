@@ -76,7 +76,8 @@ class Analysis(models.Model):
     # ``mark_digitized``. Null until then.
     signal = models.JSONField(null=True, blank=True)
 
-    failure = models.CharField(max_length=32, null=True, blank=True)
+    # Quitar el null exige una migración y revisar a quien lee ``failure`` (DJ001).
+    failure = models.CharField(max_length=32, null=True, blank=True)  # noqa: DJ001
 
     requested_at = models.DateTimeField(default=timezone.now)
     started_at = models.DateTimeField(null=True, blank=True)

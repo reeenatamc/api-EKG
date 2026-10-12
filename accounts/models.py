@@ -34,7 +34,7 @@ VERIFICATION_WINDOW_SECONDS = 600
 MAX_VERIFICATION_ATTEMPTS = 5
 
 PURPOSE_REGISTRATION = "registration"
-PURPOSE_PASSWORD_RESET = "password-reset"
+PURPOSE_PASSWORD_RESET = "password-reset"  # noqa: S105 - nombre del propósito, no una contraseña
 PURPOSE_CHOICES = [(PURPOSE_REGISTRATION, "Registration"), (PURPOSE_PASSWORD_RESET, "Password reset")]
 
 
