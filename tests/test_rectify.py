@@ -34,10 +34,18 @@ class CoefficientTests(SimpleTestCase):
 
         coefficients = perspective_coefficients(destination, source)
 
-        for (dx, dy), (sx, sy) in zip(destination, source):
+        for (dx, dy), (sx, sy) in zip(destination, source, strict=True):
             mapped_x, mapped_y = apply(coefficients, dx, dy)
             self.assertAlmostEqual(mapped_x, sx, places=6)
             self.assertAlmostEqual(mapped_y, sy, places=6)
+
+    def test_corner_lists_of_different_length_are_refused(self) -> None:
+        # zip() would stop at the shorter list and hand back eight coefficients fitted
+        # to three corners, which warps the image without any error.
+        destination = [(0.0, 0.0), (300.0, 0.0), (300.0, 200.0), (0.0, 200.0)]
+
+        with self.assertRaises(ValueError):
+            perspective_coefficients(destination, destination[:3])
 
     def test_an_identity_quad_gives_an_identity_transform(self) -> None:
         corners = [(0.0, 0.0), (100.0, 0.0), (100.0, 50.0), (0.0, 50.0)]
@@ -104,6 +112,13 @@ class FullFrameTests(SimpleTestCase):
         quad = [(0.5, 0.0), (640.0, 1.0), (639.0, 480.0), (0.0, 479.5)]
 
         self.assertTrue(is_full_frame(quad, 640, 480))
+
+    def test_a_quad_with_fewer_than_four_corners_is_refused(self) -> None:
+        # Three corners sitting on the image corners used to read as "the whole image".
+        quad = [(0.0, 0.0), (640.0, 0.0), (640.0, 480.0)]
+
+        with self.assertRaises(ValueError):
+            is_full_frame(quad, 640, 480)
 
     def test_a_real_crop_is_not_the_full_frame(self) -> None:
         quad = [(20.0, 20.0), (620.0, 25.0), (615.0, 460.0), (25.0, 455.0)]

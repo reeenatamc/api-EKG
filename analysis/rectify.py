@@ -79,7 +79,7 @@ def is_full_frame(quad: list[tuple[float, float]], width: int, height: int) -> b
     untouched.
     """
     corners = [(0.0, 0.0), (float(width), 0.0), (float(width), float(height)), (0.0, float(height))]
-    return all(_distance(q, c) <= FULL_FRAME_TOLERANCE_PX for q, c in zip(quad, corners))
+    return all(_distance(q, c) <= FULL_FRAME_TOLERANCE_PX for q, c in zip(quad, corners, strict=True))
 
 
 def perspective_coefficients(
@@ -93,7 +93,7 @@ def perspective_coefficients(
     """
     matrix = []
     targets = []
-    for (x, y), (u, v) in zip(destination, source):
+    for (x, y), (u, v) in zip(destination, source, strict=True):
         matrix.append([x, y, 1.0, 0.0, 0.0, 0.0, -x * u, -y * u])
         matrix.append([0.0, 0.0, 0.0, x, y, 1.0, -x * v, -y * v])
         targets.append(u)
