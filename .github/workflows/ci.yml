@@ -29,9 +29,6 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
 
-      - name: Install linters
-        run: pip install black==24.1.1 isort==5.13.2
-
       - name: Byte-compile every module
         # Needs none of the runtime dependencies, so it runs here rather than in
         # the job that spends four minutes installing torch.
@@ -40,11 +37,15 @@ jobs:
             ! -path '*/migrations/*' \
             -print0 | xargs -0 python -m py_compile
 
-      - name: black
-        run: black --check --diff .
+      - uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.17.0"
+          args: check --output-format github
 
-      - name: isort
-        run: isort --check-only --diff .
+      - uses: astral-sh/ruff-action@v3
+        with:
+          version: "0.17.0"
+          args: format --check --diff
 
   test:
     name: Test

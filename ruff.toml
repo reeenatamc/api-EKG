@@ -1,0 +1,17 @@
+target-version = "py312"
+line-length = 120
+extend-exclude = ["**/migrations/**"]
+
+[lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "S", "BLE", "DJ"]
+ignore = [
+  "E501",    # el largo de linea lo maneja el formatter
+  "B904",    # temporal: se corrige en el issue #19
+  "B905",    # temporal: se corrige en el issue #19
+]
+
+[lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "SIM117"]
+
+[format]
+quote-style = "double"
