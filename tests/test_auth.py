@@ -495,7 +495,7 @@ class FailureVocabularyTests(TestCase):
             "unexpected",
         }
 
-        self.assertTrue(failures.AUTH_FAILURE_REASONS <= app_side)
+        self.assertTrue(app_side >= failures.AUTH_FAILURE_REASONS)
 
     def test_an_invented_reason_raises_rather_than_reaching_the_app(self) -> None:
         # A typo that shipped would render as generic copy and hide the real cause.

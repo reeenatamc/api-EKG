@@ -43,7 +43,7 @@ class UserManager(BaseUserManager):
 
     use_in_migrations = True
 
-    def _create(self, email: str, password: str | None, **extra: object) -> "User":
+    def _create(self, email: str, password: str | None, **extra: object) -> User:
         if not email:
             raise ValueError("An email address is required.")
         user = self.model(email=self.normalize_email(email).lower(), **extra)
@@ -51,12 +51,12 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_user(self, email: str, password: str | None = None, **extra: object) -> "User":
+    def create_user(self, email: str, password: str | None = None, **extra: object) -> User:
         extra.setdefault("is_staff", False)
         extra.setdefault("is_superuser", False)
         return self._create(email, password, **extra)
 
-    def create_superuser(self, email: str, password: str | None = None, **extra: object) -> "User":
+    def create_superuser(self, email: str, password: str | None = None, **extra: object) -> User:
         extra.setdefault("is_staff", True)
         extra.setdefault("is_superuser", True)
         extra.setdefault("is_verified", True)
@@ -145,7 +145,7 @@ class VerificationCode(models.Model):
         self.save(update_fields=["attempts"])
 
     @classmethod
-    def issue(cls, user: User, purpose: str) -> tuple["VerificationCode", str]:
+    def issue(cls, user: User, purpose: str) -> tuple[VerificationCode, str]:
         """Mint a code for ``user``, invalidating any earlier one for the same purpose.
 
         Earlier codes are consumed rather than left alive: two valid codes at once doubles
@@ -168,7 +168,7 @@ class VerificationCode(models.Model):
         return record, code
 
     @classmethod
-    def latest_for(cls, user: User, purpose: str | None = None) -> "VerificationCode | None":
+    def latest_for(cls, user: User, purpose: str | None = None) -> VerificationCode | None:
         """The most recent code for ``user``, of any purpose unless one is named.
 
         Verification is purpose-blind on the way in, and that is forced by the app: its

@@ -243,7 +243,7 @@ class UploadFailureVocabularyTests(TestCase):
         # Transcribed from UploadFailureReason in app-EKG's src/capture/study.ts.
         app_side = {"network-unreachable", "unauthorized", "payload-rejected", "server-error", "unexpected"}
 
-        self.assertTrue(failures.UPLOAD_FAILURE_REASONS <= app_side)
+        self.assertTrue(app_side >= failures.UPLOAD_FAILURE_REASONS)
 
     def test_an_invented_reason_raises(self) -> None:
         with self.assertRaises(ValueError):

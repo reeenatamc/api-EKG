@@ -523,7 +523,7 @@ class FailureVocabularyTests(TestCase):
             "unexpected",
         }
 
-        self.assertTrue(ANALYSIS_FAILURE_REASONS <= app_side)
+        self.assertTrue(app_side >= ANALYSIS_FAILURE_REASONS)
 
 
 class MountCrossCheckTests(TestCase):

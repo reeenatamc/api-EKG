@@ -28,7 +28,7 @@ STANDARD_SPEED_MM_PER_SECOND = 25.0
 STANDARD_GAIN_MM_PER_MILLIVOLT = 10.0
 
 
-def study_image_path(instance: "Study", filename: str) -> str:
+def study_image_path(instance: Study, filename: str) -> str:
     """One directory per study, under the owner.
 
     The original filename is discarded except for its suffix: it comes from a phone and

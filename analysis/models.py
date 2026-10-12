@@ -216,7 +216,7 @@ class Analysis(models.Model):
         self.save(update_fields=["signal"])
 
     @classmethod
-    def claim_next(cls) -> "Analysis | None":
+    def claim_next(cls) -> Analysis | None:
         """Take the oldest queued analysis, atomically. None when the queue is empty.
 
         The claim is a conditional update -- 'set processing WHERE status is still queued'
