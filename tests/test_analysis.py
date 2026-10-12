@@ -523,7 +523,7 @@ class FailureVocabularyTests(TestCase):
             "unexpected",
         }
 
-        self.assertTrue(ANALYSIS_FAILURE_REASONS <= app_side)
+        self.assertTrue(app_side >= ANALYSIS_FAILURE_REASONS)
 
 
 class MountCrossCheckTests(TestCase):
@@ -749,7 +749,7 @@ class InterpretationMergeTests(TestCase):
                 interpret.side_effect = interpreted
             else:
                 interpret.return_value = interpreted
-            return self.runner._merge_interpretation(record, "/tmp/x.csv")
+            return self.runner._merge_interpretation(record, "/tmp/x.csv")  # noqa: S108 - literal, nunca se abre
 
     def test_a_clean_record_stays_clean(self) -> None:
         merged = self.merge(

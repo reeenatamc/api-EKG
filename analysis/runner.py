@@ -137,7 +137,7 @@ class PipelineRunner:
 
     # -- orchestration --------------------------------------------------------------
 
-    def run(self, analysis: "analysis_models.Analysis", already_claimed: bool = False) -> None:
+    def run(self, analysis: analysis_models.Analysis, already_claimed: bool = False) -> None:
         """Take one analysis from queued to ready or failed. Never raises.
 
         ``already_claimed`` is for a caller that has moved the row to 'processing' itself
@@ -161,7 +161,7 @@ class PipelineRunner:
                 diagnostics=self._diagnostics(stage="runner", detail=_traceback()),
             )
 
-    def _run_inner(self, analysis: "analysis_models.Analysis", study: Study, workdir: Path) -> None:
+    def _run_inner(self, analysis: analysis_models.Analysis, study: Study, workdir: Path) -> None:
         from ecg_pipeline.contract import to_analysis
 
         record = self._digitize(study, workdir)
@@ -229,7 +229,7 @@ class PipelineRunner:
         )
         return str(destination)
 
-    def _store_early_signal(self, analysis: "analysis_models.Analysis", record: dict[str, Any], csv_path: str) -> None:
+    def _store_early_signal(self, analysis: analysis_models.Analysis, record: dict[str, Any], csv_path: str) -> None:
         """Store the digitized trace as soon as it exists, well before interpretation.
 
         Digitization is the ~15 second stage; interpretation is the ~30 to 55 second one,

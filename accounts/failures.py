@@ -21,7 +21,7 @@ from rest_framework.response import Response
 CREDENTIALS_MISMATCH = "credentials-mismatch"
 ACCOUNT_NOT_FOUND = "account-not-found"
 EMAIL_ALREADY_REGISTERED = "email-already-registered"
-WEAK_PASSWORD = "weak-password"
+WEAK_PASSWORD = "weak-password"  # noqa: S105 - identificador del motivo, no una contraseña
 CODE_MISMATCH = "code-mismatch"
 CODE_EXPIRED = "code-expired"
 UNEXPECTED = "unexpected"
