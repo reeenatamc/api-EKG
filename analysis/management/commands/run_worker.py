@@ -22,15 +22,31 @@ from __future__ import annotations
 
 import logging
 import signal
+import threading
 import time
 from datetime import timedelta
 from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
+from django.db import DatabaseError
 from django.utils import timezone
 
 from analysis.models import Analysis
 from analysis.runner import PipelineRunner
+
+
+def _make_runner(pathway: str | None) -> PipelineRunner:
+    """The runner ECG_BACKEND asks for: local GPU/CPU, or the two GPU stages on Modal."""
+    from django.conf import settings
+
+    if settings.ECG_BACKEND == "modal":
+        from analysis.modal_runner import ModalRunner
+
+        return ModalRunner(pathway=pathway)
+    if settings.ECG_BACKEND != "local":
+        raise CommandError(f"ECG_BACKEND={settings.ECG_BACKEND!r}: use 'local' or 'modal'.")
+    return PipelineRunner(pathway=pathway)
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +81,7 @@ class Command(BaseCommand):
         for sig in (signal.SIGINT, signal.SIGTERM):
             signal.signal(sig, self._stop)
 
-        runner = PipelineRunner(pathway=options.get("pathway"))
+        runner = _make_runner(options.get("pathway"))
         # Before touching the queue: a worker told to use a GPU it cannot see must refuse to
         # start, not claim a study and fail it as a server error.
         try:
@@ -82,8 +98,16 @@ class Command(BaseCommand):
             self._run_one_by_id(runner, options["study"])
             return
 
-        self.stdout.write(self.style.SUCCESS(f"Worker started (pathway={runner.pathway}, device={runner.device})."))
-        self._loop(runner, once=options["once"])
+        from django.conf import settings
+
+        threads = settings.ECG_WORKER_THREADS if settings.ECG_BACKEND == "modal" else 1
+        self.stdout.write(
+            self.style.SUCCESS(f"Worker started (pathway={runner.pathway}, device={runner.device}, threads={threads}).")
+        )
+        if threads > 1 and not options["once"]:
+            self._loop_threads(options.get("pathway"), threads)
+        else:
+            self._loop(runner, once=options["once"])
         self.stdout.write("Worker stopped.")
 
     # -- internals -------------------------------------------------------------------
@@ -95,12 +119,24 @@ class Command(BaseCommand):
         self._running = False
         self.stdout.write("\nFinishing the current study, then stopping. Interrupt again to force.")
 
-    def _loop(self, runner: PipelineRunner, once: bool) -> None:
+    def _loop(self, runner: PipelineRunner, once: bool, before_claim: Any = None) -> None:
         from django.conf import settings
 
         poll = settings.ECG_WORKER_POLL_SECONDS
         while self._running:
-            analysis = Analysis.claim_next()
+            if before_claim is not None:
+                before_claim()
+            try:
+                analysis = Analysis.claim_next()
+            except DatabaseError:
+                # A dropped connection or a lock is not a reason to lose this loop for the
+                # rest of the worker's life: with several threads, nothing would restart
+                # just the one that died. Nothing was claimed, so trying again is safe.
+                logger.exception("could not claim the next study; retrying")
+                if before_claim is None:
+                    raise
+                time.sleep(poll)
+                continue
             if analysis is None:
                 if once:
                     self.stdout.write("Nothing queued.")
@@ -108,9 +144,43 @@ class Command(BaseCommand):
                 time.sleep(poll)
                 continue
 
-            self._process(runner, analysis)
+            if before_claim is None:
+                self._process(runner, analysis)
+            else:
+                try:
+                    self._process(runner, analysis)
+                except Exception:
+                    # The runner already turns pipeline errors into a failed row; what is
+                    # left is the database failing while recording that. The row stays
+                    # 'processing' and --reclaim-stale requeues it; the thread lives on.
+                    logger.exception("could not record the outcome of study %s", analysis.study_id)
             if once:
                 return
+
+    def _loop_threads(self, pathway: str | None, threads: int) -> None:
+        """Several studies at once, for a backend whose work happens elsewhere (Modal).
+
+        Each thread runs the same claim-then-run loop as ``_loop``; ``claim_next`` is a
+        compare-and-swap, so threads are as safe against each other as separate worker
+        processes. Each gets its own runner and, through Django, its own DB connection.
+        """
+        from django.db import close_old_connections
+
+        def loop() -> None:
+            runner = _make_runner(pathway)
+            runner.check_device()
+            try:
+                self._loop(runner, once=False, before_claim=close_old_connections)
+            finally:
+                close_old_connections()
+
+        workers = [threading.Thread(target=loop, name=f"study-{i}", daemon=True) for i in range(threads)]
+        for worker in workers:
+            worker.start()
+        # The main thread keeps the signal handlers; it only waits.
+        while any(worker.is_alive() for worker in workers):
+            for worker in workers:
+                worker.join(timeout=1)
 
     def _run_one_by_id(self, runner: PipelineRunner, study_id: str) -> None:
         analysis = Analysis.objects.filter(study_id=study_id).first()

@@ -353,6 +353,21 @@ ECG_WORKER_POLL_SECONDS = float(os.environ.get("ECG_WORKER_POLL_SECONDS", "2.0")
 # 9 MB per study. Failed runs keep theirs regardless, for inspection.
 ECG_KEEP_WORK = _flag("ECG_KEEP_WORK")
 
+# Where the GPU stages run. 'local' (the default) digitizes and interprets in the worker
+# process on ECG_DEVICE. 'modal' sends those two stages to the deployed gpu/modal_app.py
+# and keeps everything else here; see analysis/modal_runner.py.
+ECG_BACKEND = os.environ.get("ECG_BACKEND", "local").strip().lower()
+
+# Studies one worker process runs at once in 'modal' mode, one thread each. Ten matches the
+# ten GPUs the Modal Starter plan allows at the same time. Ignored in 'local' mode, where
+# one process holds one model and runs one study.
+ECG_WORKER_THREADS = int(os.environ.get("ECG_WORKER_THREADS", "10"))
+
+# The Modal SDK reads these two itself; they are here so run_worker can refuse to start
+# without them instead of failing the first study.
+MODAL_TOKEN_ID = os.environ.get("MODAL_TOKEN_ID", "")
+MODAL_TOKEN_SECRET = os.environ.get("MODAL_TOKEN_SECRET", "")
+
 # --- Logging -------------------------------------------------------------------------
 #
 # To stdout, always: a container has no log file to rotate, and `docker compose logs` (or
