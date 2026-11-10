@@ -35,7 +35,7 @@ DOCKER="sudo docker"
 step "Firewall of the VM: open 80 and 443"
 for port in 80 443; do
   if ! sudo iptables -C INPUT -p tcp --dport "$port" -j ACCEPT 2>/dev/null; then
-    sudo iptables -I INPUT 5 -p tcp --dport "$port" -m state --state NEW -j ACCEPT
+    sudo iptables -I INPUT 1 -p tcp --dport "$port" -m state --state NEW -j ACCEPT
   fi
 done
 if command -v netfilter-persistent >/dev/null; then
