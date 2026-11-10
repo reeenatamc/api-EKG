@@ -6,6 +6,12 @@ set -euo pipefail
 
 : "${ECGFOUNDER_WEIGHTS_DIR:?ECGFOUNDER_WEIGHTS_DIR must be set (see .env.example)}"
 
+if [ "${ECG_BACKEND:-local}" = "modal" ]; then
+  # The models run on Modal (gpu/modal_app.py carries its own copy of the weights).
+  echo "==> ECG_BACKEND=modal: skipping the local weights"
+  exec python manage.py run_worker --reclaim-stale
+fi
+
 echo "==> Checking ECGFounder weights in $ECGFOUNDER_WEIGHTS_DIR"
 # download-ecgfounder-weights is ecg-pipeline's own scripts/download_weights.sh (copied in
 # by the Dockerfile): it already skips any file that is present, so this is a no-op on every

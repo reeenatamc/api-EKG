@@ -84,9 +84,14 @@ RUN chmod +x /app/docker/entrypoint-api.sh /app/docker/entrypoint-worker.sh
 # Runs as an unprivileged user, per the deployment report's access checklist. Owns the
 # digitizer checkout too: interpret_ecg.py and digitize.py write nothing there today, but
 # nothing about a read-only checkout is load-bearing enough to depend on staying that way.
+# /data/* are the mount points of the named volumes in docker-compose.yml. A new named
+# volume copies the ownership of the directory it is mounted over, so they must exist here,
+# owned by appuser; otherwise Docker creates them as root and collectstatic, uploads and the
+# weights download all fail with "Permission denied".
 RUN useradd --create-home --uid 1000 appuser \
     && mkdir -p /app/media /app/work /app/staticfiles \
-    && chown -R appuser:appuser /app "$DIGITIZER_HOME"
+        /data/media /data/staticfiles /data/work /data/weights \
+    && chown -R appuser:appuser /app /data "$DIGITIZER_HOME"
 USER appuser
 
 EXPOSE 8000
