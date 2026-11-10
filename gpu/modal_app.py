@@ -58,15 +58,20 @@ image = (
     # ecg-pipeline's own runtime dependencies, as its pyproject pins them; it is then
     # installed with --no-deps so pip cannot move the torch/numpy pair above.
     .pip_install("numpy>=1.26,<2", "scipy>=1.12,<1.16", "pillow>=10.2", "matplotlib>=3.8", "pyyaml>=6.0")
+    # Imported by the digitizer's own src/ and missing from requirements-inference.txt.
+    .pip_install("tqdm", "pandas>=2.1,<2.3")
     .run_commands(
         f"git clone --branch {ECG_PIPELINE_REF} --depth 1 https://github.com/reeenatamc/ecg-pipeline.git {PIPELINE_SRC}",
-        f"pip install --no-deps {PIPELINE_SRC}",
+        # Editable, and the checkout is kept: ecg_pipeline finds configs/ (the digitizer config,
+        # lead layouts, thresholds) relative to its own source, and a regular install leaves
+        # them behind.
+        f"pip install --no-deps -e {PIPELINE_SRC}",
         f"ECGFOUNDER_WEIGHTS_DIR={WEIGHTS_DIR} bash {PIPELINE_SRC}/scripts/download_weights.sh",
         f"git clone https://github.com/Ahus-AIM/Open-ECG-Digitizer.git {DIGITIZER_HOME}",
         f"git -C {DIGITIZER_HOME} checkout {DIGITIZER_COMMIT}",
         f"git -C {DIGITIZER_HOME} lfs pull",
         f'for p in {PIPELINE_SRC}/patches/*.patch; do echo "applying $p"; git -C {DIGITIZER_HOME} apply "$p"; done',
-        f"rm -rf {PIPELINE_SRC} {DIGITIZER_HOME}/.git",
+        f"rm -rf {DIGITIZER_HOME}/.git",
     )
     .env(
         {
