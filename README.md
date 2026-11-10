@@ -439,6 +439,32 @@ Medido en Colab con una T4 (notebook `scripts/medir_gpu_colab.ipynb` de ecg-pipe
 misma calidad de digitalización en 24 de 24 imágenes. La imagen no se ha construido ni
 probado en una GPU real todavía.
 
+### Análisis en GPU con Modal (la forma prevista para el piloto)
+
+Con `ECG_BACKEND=modal` el worker no corre modelos: endereza la foto, manda la
+digitalización y la interpretación a las GPU T4 de Modal (`gpu/modal_app.py`) y hace todo
+lo demás aquí (corrección de calibración, señal temprana, contrato, chequeo de montaje),
+con el mismo código de `PipelineRunner` (`analysis/modal_runner.py` solo cambia
+`_digitize` e `_interpret`). Un solo contenedor `worker` atiende `ECG_WORKER_THREADS`
+estudios a la vez (10 por defecto, las 10 GPU simultáneas del plan Starter), así que diez
+personas que suben a la vez reciben su resultado en paralelo: unos 17 s con la GPU
+caliente, uno o dos minutos la primera vez. El servidor ya no necesita 16 GB; alcanza la VM
+gratuita de Oracle (2 OCPU, 12 GB).
+
+- Todo el servidor, en una VM nueva de Oracle: `deploy/oracle-setup.sh` (instrucciones
+  dentro del script). Deja DuckDNS, `.env`, la app de Modal desplegada y Compose arriba.
+- Solo la parte de GPU, desde cualquier máquina con el token: `modal deploy gpu/modal_app.py`.
+- Antes de una sesión de prueba, dejar las GPU calientes, y apagarlas al terminar (cada T4
+  encendida cuesta unos 0,76 USD la hora, dentro de los 30 USD gratis del mes de Modal):
+
+  ```bash
+  docker compose exec worker python manage.py gpu_warm 10   # antes
+  docker compose exec worker python manage.py gpu_warm 0    # después
+  ```
+
+- Si Modal falla, `ECG_BACKEND=local` en `.env` y `docker compose up -d worker` vuelven al
+  pipeline en la CPU de la VM (lento: un estudio a la vez).
+
 ### Actualizar una versión desplegada
 
 ```bash

@@ -64,3 +64,8 @@ gunicorn>=22.0
 # [binary] bundles libpq rather than compiling against the system one, which is what makes
 # this installable in the same requirements.txt as everything else, no extra apt package.
 psycopg[binary]>=3.1
+
+# Client for the GPU half on Modal, used only when ECG_BACKEND=modal
+# (analysis/modal_runner.py, gpu/modal_app.py). Pure Python on this side; it never imports
+# torch or numpy, so it cannot disturb the pinned pair above.
+modal>=1.0,<2.0
